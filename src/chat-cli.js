@@ -271,7 +271,7 @@ async function handleInput(input) {
                         stopThinking();
                         console.log('\n📊 知识库状态:');
                         console.log('  当前知识库:', status.currentKnowledgeBase || '未选择');
-                        console.log('  文档数量:', status.docCount);
+                        console.log('  文档数量:', status.documentCount);
                         console.log('  分块大小:', status.chunkSize);
                         console.log('  块重叠:', status.chunkOverlap);
                         return true;

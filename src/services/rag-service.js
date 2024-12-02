@@ -176,7 +176,7 @@ export class RAGService {
         return {
             isInitialized: this.vectorStores.size > 0,
             currentKnowledgeBase: currentKB,
-            docCount,
+            documentCount: docCount,  
             chunkSize: this.config.chunkSize,
             chunkOverlap: this.config.chunkOverlap
         };

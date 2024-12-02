@@ -50,8 +50,8 @@ let ragMode = 'single';  // 'single' 或 'multi'
 // 检查 RAG 服务状态
 async function checkRagStatus() {
     try {
-        const status = await ragService.getStatus();
         console.log('\n=== RAG Service Status ===');
+        const status = await ragService.getStatus();
         console.log('Initialized:', status.isInitialized);
         console.log('Current KB:', status.currentKnowledgeBase);
         console.log('Document Count:', status.documentCount);
@@ -154,27 +154,39 @@ export async function chat(userMessage, userId, conversationId) {
                 console.log('RAG Result received:', !!ragResult);
                 
                 // 添加调试日志
-                console.log('\n=== RAG 检索结果 ===');
-                console.log('查询的知识库:', ragResult.metadata.knowledgeBases.join(', '));
-                console.log('匹配文档数:', ragResult.metadata.matchCount);
-                console.log('Documents:', ragResult.documents.length);
-                
-                if (ragResult.documents?.length > 0) {
-                    console.log('\n检索到的内容片段:');
-                    ragResult.documents.forEach((doc, index) => {
-                        console.log(`\n片段 ${index + 1} (知识库: ${doc.knowledgeBase}, 相关度: ${(doc.score * 100).toFixed(1)}%):`);
-                        console.log(doc.content);
-                    });
-                } else {
-                    console.log('Warning: No documents found in RAG result');
+                if (process.env.DEBUG) {
+                    console.log('\n=== RAG 检索结果 ===');
+                    // 显示查询的知识库
+                    if (ragMode === 'multi' && ragResult.metadata?.knowledgeBases) {
+                        console.log('查询的知识库:', ragResult.metadata.knowledgeBases.join(', '));
+                    } else {
+                        const status = await ragService.getStatus();
+                        console.log('查询的知识库:', status.currentKnowledgeBase);
+                    }
+                    
+                    // 显示相关度分数
+                    if (ragResult.metadata?.scores) {
+                        console.log('相关度分数:', ragResult.metadata.scores.join(', '));
+                    }
+                    
+                    // 显示检索到的内容
+                    if (ragResult.context) {
+                        console.log('\n检索到的内容:');
+                        console.log(ragResult.context);
+                    }
                 }
-                
+
+                // 组合提示
+                const prompt = ragResult.context ? 
+                    `基于以下内容回答问题:\n\n${ragResult.context}\n\n问题: ${userMessage}` :
+                    userMessage;
+
                 // 构建系统消息
-                const systemMessage = `你是一个专业的AI助手。请基于以下知识库内容回答用户的问题：\n\n${ragResult.context}`;
+                const systemMessage = new SystemMessage(prompt);
 
                 // 构建消息历史
                 const messages = [
-                    new SystemMessage(systemMessage),
+                    systemMessage,
                     ...conversationHistory.map(msg => 
                         msg.role === 'user' ? new HumanMessage(msg.content) : new AIMessage(msg.content)
                     ),
@@ -213,9 +225,9 @@ export async function chat(userMessage, userId, conversationId) {
                     messages: conversationHistory,
                     metadata: {
                         mode: 'rag',
-                        knowledgeBase: ragResult.metadata.knowledgeBases.join(', '),
-                        matchCount: ragResult.metadata.matchCount,
-                        references: ragResult.documents.map((doc, index) => ({
+                        knowledgeBase: ragMode === 'multi' ? ragResult.metadata.knowledgeBases.join(', ') : (await ragService.getStatus()).currentKnowledgeBase,
+                        matchCount: ragResult.metadata?.matchCount,
+                        references: ragResult.documents?.map((doc, index) => ({
                             id: index + 1,
                             score: doc.score,
                             excerpt: doc.content
