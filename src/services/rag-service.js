@@ -17,8 +17,8 @@ export class RAGService {
             chunkOverlap: config.chunkOverlap || 200,
             
             // 检索配置
-            maxRetrievedDocs: config.maxRetrievedDocs || 2,
-            minRelevanceScore: config.minRelevanceScore || 0.7,
+            maxRetrievedDocs: config.maxRetrievedDocs || 5,
+            minRelevanceScore: config.minRelevanceScore || 0.9,
             
             // 结果处理配置
             useScoreWeighting: config.useScoreWeighting ?? true,
@@ -44,6 +44,21 @@ export class RAGService {
         
         this.vectorStores = new Map(); // 存储多个知识库的向量存储
         this.currentKnowledgeBase = null; // 当前激活的知识库名称
+        this.enabled = true; // RAG 服务启用状态
+        this._mode = 'single'; // RAG 服务模式
+    }
+
+    // 模式的 getter 和 setter
+    get mode() {
+        return this._mode;
+    }
+
+    set mode(value) {
+        const validModes = ['single', 'multi'];
+        if (!validModes.includes(value)) {
+            throw new Error(`无效的模式: ${value}。有效的模式包括: ${validModes.join(', ')}`);
+        }
+        this._mode = value;
     }
 
     // 获取所有知识库列表
@@ -193,74 +208,77 @@ export class RAGService {
 
     // 处理消息
     async processMessage(message, options = {}) {
-        const { mode = 'single' } = options;  // 'single' 或 'multi'
+        // 验证输入
+        if (!message || typeof message !== 'string' || message.trim().length === 0) {
+            throw new Error('查询内容不能为空');
+        }
+
+        if (!this.enabled) {
+            throw new Error('RAG 服务未启用');
+        }
+
+        const mode = options.mode || this.mode;
         
-        if (mode === 'multi') {
-            return this.multiSearch(message);
-        }
-        
-        // 单知识库模式
-        const status = await this.getKnowledgeBaseStatus();
-        if (!status.isInitialized) {
-            throw new Error('没有激活的知识库');
-        }
-
-        const vectorStore = this.vectorStores.get(this.currentKnowledgeBase);
-        if (!vectorStore) {
-            throw new Error(`知识库 ${this.currentKnowledgeBase} 未找到`);
-        }
-
-        const results = await vectorStore.similaritySearchWithScore(message, this.config.maxRetrievedDocs);
-        
-        // 过滤和加权相关文档
-        const relevantDocs = results
-            .filter(([_, score]) => score >= this.config.minRelevanceScore)
-            .map(([doc, score]) => ({
-                content: doc.pageContent,
-                score: score,
-                knowledgeBase: this.currentKnowledgeBase
-            }))
-            .sort((a, b) => b.score - a.score);
-
-        if (relevantDocs.length === 0) {
-            throw new Error('没有找到相关的知识库内容');
-        }
-
-        // 构建引用文本
-        const references = relevantDocs
-            .map((doc, index) => 
-                `\n引用 ${index + 1} (知识库: ${doc.knowledgeBase}, 相关度: ${(doc.score * 100).toFixed(1)}%):\n${doc.content}`
-            )
-            .join('\n');
-
-        // 返回结果
-        return {
-            context: references,
-            documents: relevantDocs,
-            metadata: {
-                knowledgeBase: this.currentKnowledgeBase,
-                matchCount: relevantDocs.length,
-                references: relevantDocs.map((doc, index) => ({
-                    id: index + 1,
-                    score: doc.score,
-                    knowledgeBase: doc.knowledgeBase,
-                    excerpt: doc.content
-                }))
+        if (mode === 'single') {
+            if (!this.currentKnowledgeBase || !this.vectorStores.has(this.currentKnowledgeBase)) {
+                throw new Error('没有激活的知识库');
             }
-        };
+            
+            const vectorStore = this.vectorStores.get(this.currentKnowledgeBase);
+            const results = await vectorStore.similaritySearchWithScore(
+                message,
+                this.config.maxRetrievedDocs
+            );
+            
+            const relevantDocs = results
+                .filter(([_, score]) => score >= this.config.minRelevanceScore)
+                .map(([doc, score]) => ({
+                    content: doc.pageContent,
+                    score: score,
+                    knowledgeBase: this.currentKnowledgeBase
+                }));
+
+            if (relevantDocs.length === 0) {
+                throw new Error('没有找到相关的知识库内容');
+            }
+
+            const context = relevantDocs
+                .map((doc, index) => 
+                    `\n引用 ${index + 1} (知识库: ${doc.knowledgeBase}, 相关度: ${(doc.score * 100).toFixed(1)}%):\n${doc.content}`
+                )
+                .join('\n');
+
+            return {
+                context,
+                documents: relevantDocs,
+                metadata: {
+                    knowledgeBase: this.currentKnowledgeBase,
+                    matchCount: relevantDocs.length,
+                    references: relevantDocs.map((doc, index) => ({
+                        id: index + 1,
+                        score: doc.score,
+                        knowledgeBase: doc.knowledgeBase,
+                        excerpt: doc.content
+                    }))
+                }
+            };
+        } else if (mode === 'multi') {
+            return await this.multiSearch(message);
+        } else {
+            throw new Error(`不支持的模式: ${mode}`);
+        }
     }
 
     // 多知识库并行查询
     async multiSearch(message) {
-        // 确保所有知识库已加载
-        const loadResult = await this.loadAllKnowledgeBases();
-        if (!loadResult.success) {
-            throw new Error(`加载知识库失败: ${loadResult.message}`);
+        // 确保 RAG 服务已启用
+        if (!this.enabled) {
+            throw new Error('RAG 服务未启用');
         }
-        
+
         // 获取所有已加载的知识库
         const activeKbs = Array.from(this.vectorStores.keys());
-        if (activeKbs.length === 0) {
+        if (!activeKbs.length) {
             throw new Error('没有可用的知识库');
         }
 
@@ -271,17 +289,24 @@ export class RAGService {
             activeKbs.map(async kbName => {
                 try {
                     const vectorStore = this.vectorStores.get(kbName);
+                    if (!vectorStore) {
+                        console.error(`知识库 ${kbName} 未找到`);
+                        return [];
+                    }
+                    
                     const searchResults = await vectorStore.similaritySearchWithScore(
                         message, 
                         this.config.maxRetrievedDocs
                     );
                     
                     // 为每个结果添加来源信息
-                    return searchResults.map(([doc, score]) => ({
-                        content: doc.pageContent,
-                        score: score,
-                        knowledgeBase: kbName
-                    }));
+                    return searchResults
+                        .filter(([_, score]) => score >= this.config.minRelevanceScore)
+                        .map(([doc, score]) => ({
+                            content: doc.pageContent,
+                            score: score,
+                            knowledgeBase: kbName
+                        }));
                 } catch (error) {
                     console.error(`查询知识库 ${kbName} 失败:`, error);
                     return [];
@@ -292,11 +317,10 @@ export class RAGService {
         // 合并结果并排序
         const mergedResults = results
             .flat()
-            .filter(result => result.score >= this.config.minRelevanceScore)
             .sort((a, b) => b.score - a.score)
             .slice(0, this.config.maxRetrievedDocs);
 
-        if (mergedResults.length === 0) {
+        if (!mergedResults.length) {
             throw new Error('没有找到相关的知识库内容');
         }
 

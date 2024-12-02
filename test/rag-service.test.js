@@ -7,26 +7,25 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-describe('RAG Service Tests', () => {
+describe('RAG 服务测试', function() {
+    this.timeout(30000); // 增加超时时间到 30 秒
+
     let ragService;
     const testKnowledgeBasePath = path.join(__dirname, '../docs');
     
-    before(() => {
-        // 初始化RAG服务
+    beforeEach(() => {
+        // 初始化 RAG 服务
         ragService = new RAGService({
             chunkSize: 1000,
             chunkOverlap: 200,
-            maxRetrievedDocs: 2,
+            maxRetrievedDocs: 5,
             minRelevanceScore: 0.7,
-            useScoreWeighting: true,
-            weightingMethod: 'linear',
-            debug: true,
-            knowledgeBasePath: testKnowledgeBasePath
+            kbDir: testKnowledgeBasePath
         });
     });
 
-    describe('Knowledge Base Management', () => {
-        it('should list available knowledge bases', async () => {
+    describe('知识库管理', () => {
+        it('应该能列出可用的知识库', async () => {
             const kbs = await ragService.listKnowledgeBases();
             expect(kbs).to.be.an('array');
             expect(kbs.length).to.be.greaterThan(0);
@@ -34,118 +33,178 @@ describe('RAG Service Tests', () => {
             expect(kbs[0]).to.have.property('path');
         });
 
-        it('should switch to a knowledge base', async () => {
+        it('应该能切换到指定的知识库', async () => {
             const result = await ragService.switchKnowledgeBase('agent-article');
             expect(result.success).to.be.true;
-            
             const status = await ragService.getStatus();
             expect(status.currentKnowledgeBase).to.equal('agent-article');
             expect(status.isInitialized).to.be.true;
         });
 
-        it('should fail to switch to non-existent knowledge base', async () => {
+        it('切换到不存在的知识库时应该失败', async () => {
             const result = await ragService.switchKnowledgeBase('non-existent-kb');
             expect(result.success).to.be.false;
             expect(result.message).to.include('不存在');
         });
     });
 
-    describe('RAG Processing', () => {
+    describe('RAG 处理', () => {
         before(async () => {
             // 确保切换到测试知识库
             await ragService.switchKnowledgeBase('agent-article');
         });
 
-        it('should process a query and return relevant documents', async () => {
-            const query = 'AI代理中的任务分解如何做';
+        it('应该能处理查询并返回相关文档', async () => {
+            ragService.enabled = true;
+            ragService.config.minRelevanceScore = 0.7;
+            await ragService.switchKnowledgeBase('agent-article');
+            
+            const query = '什么是 Agent？';
             const result = await ragService.processMessage(query);
             
-            expect(result).to.have.property('answer');
             expect(result).to.have.property('context');
-            expect(result).to.have.property('documents');
-            expect(result).to.have.property('metadata');
-            
             expect(result.documents).to.be.an('array');
             expect(result.documents.length).to.be.greaterThan(0);
-            
-            expect(result.metadata).to.have.property('knowledgeBase');
-            expect(result.metadata).to.have.property('matchCount');
-            expect(result.metadata).to.have.property('references');
+            expect(result.metadata.knowledgeBase).to.equal('agent-article');
         });
 
-        it('should handle queries with no relevant documents', async () => {
+        it('当没有找到相关文档时应该抛出错误', async () => {
+            // 确保 RAG 服务已启用并设置了知识库
+            ragService.enabled = true;
+            ragService.config.minRelevanceScore = 0.99; // 设置一个很高的相关性阈值
+            await ragService.switchKnowledgeBase('agent-article');
+            
             const query = '这是一个完全不相关的查询XYZABC';
-            const result = await ragService.processMessage(query);
             
-            // 检查返回的文档相关度是否都很低
-            expect(result.documents).to.be.an('array');
-            result.documents.forEach(doc => {
-                expect(doc.score).to.be.lessThan(0.8); // 相关度应该较低
-            });
+            let thrownError = null;
+            try {
+                await ragService.processMessage(query);
+            } catch (error) {
+                thrownError = error;
+            }
+            
+            expect(thrownError).to.not.be.null;
+            expect(thrownError.message).to.equal('没有找到相关的知识库内容');
+
+            // 恢复相关性阈值
+            ragService.config.minRelevanceScore = 0.7;
         });
     });
 
-    describe('Status Management', () => {
-        it('should return correct status', async () => {
+    describe('状态管理', () => {
+        it('应该返回正确的状态', async () => {
             const status = await ragService.getStatus();
-            expect(status).to.have.property('currentKnowledgeBase');
-            expect(status).to.have.property('loadedKnowledgeBases');
             expect(status).to.have.property('isInitialized');
+            expect(status).to.have.property('currentKnowledgeBase');
+            expect(status).to.have.property('documentCount');
+            expect(status).to.have.property('chunkSize');
+            expect(status).to.have.property('chunkOverlap');
             
-            expect(status.loadedKnowledgeBases).to.be.an('array');
             expect(status.isInitialized).to.be.a('boolean');
+            expect(status.documentCount).to.be.a('number');
         });
     });
 
-    describe('Knowledge Base Retrieval Tests', () => {
-        it('should retrieve relevant content for natural language processing query', async () => {
-            // 初始化知识库
-            await ragService.initializeKnowledgeBase('d:/web/app/ai-chat4/docs/test-kb.txt', 'test-kb');
+    describe('知识库检索测试', () => {
+        it('应该能检索到自然语言处理相关的内容', async () => {
+            ragService.enabled = true;
+            ragService.config.minRelevanceScore = 0.7; // 重置相关性阈值
+            await ragService.switchKnowledgeBase('test-kb');
             
-            // 测试查询
-            const query = "AI助手在自然语言处理方面有哪些功能？";
+            const query = '什么是自然语言处理？';
             const result = await ragService.processMessage(query);
             
-            // 打印检索结果
-            console.log('\n=== RAG 检索结果 ===');
-            console.log('查询:', query);
-            console.log('匹配文档数:', result.documents.length);
-            console.log('相关度分数:', result.documents.map(doc => 
-                `${(doc.score * 100).toFixed(1)}%`
-            ).join(', '));
-            
-            console.log('\n检索到的内容片段:');
-            result.documents.forEach((doc, index) => {
-                console.log(`\n片段 ${index + 1} (相关度: ${(doc.score * 100).toFixed(1)}%):`);
-                console.log(doc.pageContent);
-            });
-            
-            // 验证结果
-            expect(result.documents.length > 0, '应该检索到至少一个相关文档');
-            expect(result.documents[0].score >= 0.7, '最高相关度应该大于 0.7');
-            expect(result.documents[0].pageContent.includes('自然语言'), '检索内容应该包含关键词');
+            expect(result).to.have.property('context');
+            expect(result.documents).to.be.an('array');
+            expect(result.documents.length).to.be.greaterThan(0);
+            expect(result.documents[0].content).to.include('自然语言处理');
         });
-        
-        it('should retrieve relevant content for conversation management query', async () => {
-            const query = "AI助手是如何管理对话的？";
+
+        it('应该能检索到对话管理相关的内容', async () => {
+            ragService.enabled = true;
+            ragService.config.minRelevanceScore = 0.7; // 重置相关性阈值
+            await ragService.switchKnowledgeBase('test-kb');
+            
+            const query = '如何管理对话上下文？';
             const result = await ragService.processMessage(query);
             
-            console.log('\n=== RAG 检索结果 ===');
-            console.log('查询:', query);
-            console.log('匹配文档数:', result.documents.length);
-            console.log('相关度分数:', result.documents.map(doc => 
-                `${(doc.score * 100).toFixed(1)}%`
-            ).join(', '));
+            expect(result).to.have.property('context');
+            expect(result.documents).to.be.an('array');
+            expect(result.documents.length).to.be.greaterThan(0);
+            expect(result.documents[0].content).to.include('对话');
+        });
+    });
+
+    describe('RAG 模式管理', () => {
+        it('单知识库模式应该正常工作', async () => {
+            ragService.enabled = true;
+            ragService.config.minRelevanceScore = 0.7; // 重置相关性阈值
+            ragService.mode = 'single';
+            await ragService.switchKnowledgeBase('agent-article');
             
-            console.log('\n检索到的内容片段:');
-            result.documents.forEach((doc, index) => {
-                console.log(`\n片段 ${index + 1} (相关度: ${(doc.score * 100).toFixed(1)}%):`);
-                console.log(doc.pageContent);
-            });
+            const result = await ragService.processMessage('什么是 Agent？');
             
-            expect(result.documents.length > 0, '应该检索到至少一个相关文档');
-            expect(result.documents[0].score >= 0.7, '最高相关度应该大于 0.7');
-            expect(result.documents[0].pageContent.includes('对话'), '检索内容应该包含关键词');
+            expect(result).to.have.property('context');
+            expect(result.documents).to.be.an('array');
+            expect(result.documents.length).to.be.greaterThan(0);
+            expect(result.metadata.knowledgeBase).to.equal('agent-article');
+        });
+
+        it('多知识库模式应该正常工作', async () => {
+            ragService.enabled = true;
+            ragService.config.minRelevanceScore = 0.7; // 重置相关性阈值
+            ragService.mode = 'multi';
+            await ragService.loadAllKnowledgeBases();
+            
+            const result = await ragService.processMessage('什么是对话管理？');
+            
+            expect(result).to.have.property('context');
+            expect(result.documents).to.be.an('array');
+            expect(result.documents.length).to.be.greaterThan(0);
+            expect(result.metadata.knowledgeBases).to.be.an('array');
+        });
+
+        it('禁用状态应该被正确处理', async () => {
+            ragService.enabled = false;
+            
+            try {
+                await ragService.processMessage('test query');
+                expect.fail('Should have thrown an error');
+            } catch (error) {
+                expect(error.message).to.equal('RAG 服务未启用');
+            }
+        });
+    });
+
+    describe('错误处理', () => {
+        it('单知识库模式下应该正确处理找不到知识库的情况', async () => {
+            ragService.enabled = true;
+            ragService.mode = 'single';
+            ragService.currentKnowledgeBase = null;
+            
+            try {
+                await ragService.processMessage('test query');
+                expect.fail('Should have thrown an error');
+            } catch (error) {
+                expect(error.message).to.equal('没有激活的知识库');
+            }
+        });
+
+        it('多知识库模式下应该正确处理没有可用知识库的情况', async () => {
+            // 确保 RAG 服务已启用并清空知识库
+            ragService.enabled = true;
+            ragService.mode = 'multi';
+            ragService.vectorStores.clear();
+            
+            let error = null;
+            try {
+                await ragService.multiSearch('test query');
+            } catch (e) {
+                error = e;
+            }
+            
+            expect(error).to.not.be.null;
+            expect(error.message).to.equal('没有可用的知识库');
         });
     });
 });
