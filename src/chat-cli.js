@@ -83,7 +83,26 @@ function showWelcome() {
     console.log(chalk.yellow('- clear:   🧹 清除屏幕'));
     console.log(chalk.yellow('- init:    🔄 初始化系统 (清除所有数据)'));
     console.log(chalk.yellow('- exit:    👋 退出程序'));
+    console.log(chalk.yellow('- help:    🤔 显示帮助信息'));
     console.log('');
+}
+
+// 显示帮助信息
+function showHelp() {
+    console.log(chalk.blue('\n=== 🎯 命令帮助 ===\n'));
+    const commands = [
+        { cmd: '/list', desc: '显示历史会话列表' },
+        { cmd: '/switch', desc: '切换到指定会话' },
+        { cmd: '/new', desc: '创建新会话' },
+        { cmd: '/clear', desc: '清除当前会话上下文' },
+        { cmd: '/help', desc: '显示此帮助信息' },
+        { cmd: '/exit', desc: '退出应用程序' }
+    ];
+
+    commands.forEach(({ cmd, desc }) => {
+        console.log(chalk.yellow(cmd.padEnd(15)) + chalk.gray(desc));
+    });
+    console.log(); // 空行
 }
 
 // 从数据库获取会话列表
@@ -253,21 +272,72 @@ async function handleInput(input) {
 
     const [command, ...args] = input.split(' ');
 
+    if (input.startsWith('/')) {
+        switch (input.trim()) {
+            case '/list':
+                const selectedId = await showConversationList();
+                if (selectedId) {
+                    currentConversationId = selectedId;
+                    clearScreen();
+                    console.log(chalk.green('📜 已切换到选定的对话'));
+                    showWelcome();
+                }
+                break;
+            case '/new':
+                currentConversationId = null;
+                clearScreen();
+                console.log(chalk.green('✨ 开始新对话'));
+                showWelcome();
+                break;
+            case '/clear':
+                clearScreen();
+                showWelcome();
+                break;
+            case '/exit':
+                console.log(chalk.yellow('\n👋 感谢使用，再见！'));
+                rl.close();
+                return false;
+            case '/help':
+                showHelp();
+                break;
+            default:
+                console.log(chalk.red('❌ 未知的命令'));
+        }
+        return true;
+    }
+
     switch (command.toLowerCase()) {
+        case 'help':
+        case '/help':
+            showHelp();
+            break;
         case 'exit':
+        case '/exit':
             console.log(chalk.yellow('\n👋 感谢使用，再见！'));
             rl.close();
             return false;
         case 'clear':
+        case '/clear':
             clearScreen();
             showWelcome();
-            return true;
+            break;
+        case 'list':
+        case '/list':
+            const selectedId = await showConversationList();
+            if (selectedId) {
+                currentConversationId = selectedId;
+                clearScreen();
+                console.log(chalk.green('📜 已切换到选定的对话'));
+                showWelcome();
+            }
+            break;
         case 'new':
+        case '/new':
             currentConversationId = null;
             clearScreen();
             console.log(chalk.green('✨ 开始新对话'));
             showWelcome();
-            return true;
+            break;
         case 'rag':
             startThinking('切换模式');
             let mode = null;
@@ -386,15 +456,6 @@ async function handleInput(input) {
             }
             return true;
             
-        case 'list':
-            const selectedConversationId = await showConversationList();
-            if (selectedConversationId) {
-                currentConversationId = selectedConversationId;
-                clearScreen();
-                console.log(chalk.green('📜 已切换到选定的对话'));
-                showWelcome();
-            }
-            return true;
         case 'name':
             const newName = await new Promise(resolve => {
                 rl.question(chalk.yellow('👤 请输入你的名字: '), resolve);
