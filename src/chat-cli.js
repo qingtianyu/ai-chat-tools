@@ -15,7 +15,11 @@ let currentUserId = null;
 let currentConversationId = null;
 let userName = null;
 let isRagEnabled = false;
+let isDebugMode = false;
 let thinkingAnimation = null;
+
+// 初始化调试模式
+process.env.DEBUG = '';  // 默认关闭调试模式
 
 // 思考动画帧
 const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -75,6 +79,7 @@ function showWelcome() {
     console.log(chalk.yellow('  • kb del <n>       删除知识库'));
     console.log(chalk.yellow('  • kb switch <n>    切换知识库'));
     console.log(chalk.yellow('  • kb status        查看知识库状态'));
+    console.log(chalk.yellow('- debug:   🔍 切换调试模式'));
     console.log(chalk.yellow('- clear:   🧹 清除屏幕'));
     console.log(chalk.yellow('- init:    🔄 初始化系统 (清除所有数据)'));
     console.log(chalk.yellow('- exit:    👋 退出程序'));
@@ -167,14 +172,12 @@ async function initializeUser() {
 
 // 处理用户输入
 async function handleInput(input) {
-    if (!input.trim()) {
-        return true;
-    }
+    input = input.trim();
+    if (!input) return true;
 
-    const args = input.split(' ');
-    const command = args[0].toLowerCase();
+    const [command, ...args] = input.split(' ');
 
-    switch (command) {
+    switch (command.toLowerCase()) {
         case 'exit':
             console.log(chalk.yellow('\n👋 感谢使用，再见！'));
             rl.close();
@@ -192,8 +195,8 @@ async function handleInput(input) {
         case 'rag':
             startThinking('切换模式');
             let mode = null;
-            if (args.length > 1) {
-                mode = args[1].toLowerCase();
+            if (args.length > 0) {
+                mode = args[0].toLowerCase();
                 if (mode !== 'single' && mode !== 'multi') {
                     stopThinking();
                     console.log(chalk.red('❌ 无效的模式，只支持 single 或 multi'));
@@ -205,12 +208,12 @@ async function handleInput(input) {
             console.log(chalk.green(`\n🧠 ${currentStatus.message}`));
             return true;
         case 'kb':
-            if (args.length < 2) {
+            if (args.length < 1) {
                 console.log(chalk.red('❌ 请指定知识库操作：list, add, del, switch, status'));
                 return true;
             }
             
-            const subCommand = args[1].toLowerCase();
+            const subCommand = args[0].toLowerCase();
             startThinking('处理知识库');
             
             try {
@@ -225,37 +228,37 @@ async function handleInput(input) {
                         break;
                         
                     case 'add':
-                        if (args.length < 3) {
+                        if (args.length < 2) {
                             stopThinking();
                             console.log(chalk.red('❌ 请指定文件路径'));
                             return true;
                         }
-                        const filePath = args[2];
-                        const name = args[3]; // 可选的知识库名称
+                        const filePath = args[1];
+                        const name = args[2]; // 可选的知识库名称
                         const result = await ragService.addKnowledgeBase(filePath, name);
                         stopThinking();
                         console.log(chalk.green(`\n✅ 知识库 "${result.name}" 添加成功`));
                         break;
                         
                     case 'del':
-                        if (args.length < 3) {
+                        if (args.length < 2) {
                             stopThinking();
                             console.log(chalk.red('❌ 请指定知识库名称'));
                             return true;
                         }
-                        const kbName = args[2];
+                        const kbName = args[1];
                         await ragService.removeKnowledgeBase(kbName);
                         stopThinking();
                         console.log(chalk.green(`\n✅ 知识库 "${kbName}" 删除成功`));
                         break;
                         
                     case 'switch':
-                        if (args.length < 3) {
+                        if (args.length < 2) {
                             stopThinking();
                             console.log(chalk.red('❌ 请指定知识库名称'));
                             return true;
                         }
-                        const targetKb = args[2];
+                        const targetKb = args[1];
                         const switchResult = await ragService.switchKnowledgeBase(targetKb);
                         stopThinking();
                         if (switchResult.success) {
@@ -329,8 +332,13 @@ async function handleInput(input) {
                 console.log(chalk.yellow('🛑 初始化已取消'));
             }
             return true;
+        case 'debug':
+            isDebugMode = !isDebugMode;
+            console.log(chalk.cyan(`\n🔍 调试模式已${isDebugMode ? '开启' : '关闭'}`));
+            process.env.DEBUG = isDebugMode ? 'true' : '';
+            return true;
         default:
-            const userInput = args.join(' ');
+            const userInput = input;
             startThinking();
             const response = await chat(userInput, currentUserId, currentConversationId);
             stopThinking();

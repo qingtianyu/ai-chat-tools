@@ -141,17 +141,23 @@ export async function chat(userMessage, userId, conversationId) {
         const conversationHistory = conversation.messages;
 
         let response;
-        console.log('\n=== Debug: Chat Processing ===');
-        console.log('RAG Enabled:', isRagEnabled);
+        if (process.env.DEBUG) {
+            console.log('\n=== Debug: Chat Processing ===');
+            console.log('RAG Enabled:', isRagEnabled);
+        }
         
         if (isRagEnabled) {
             try {
-                console.log('Attempting RAG processing...');
-                console.log('Current RAG mode:', ragMode);
+                if (process.env.DEBUG) {
+                    console.log('Attempting RAG processing...');
+                    console.log('Current RAG mode:', ragMode);
+                }
                 
                 // 使用RAG处理消息
                 const ragResult = await ragService.processMessage(userMessage, { mode: ragMode });
-                console.log('RAG Result received:', !!ragResult);
+                if (process.env.DEBUG) {
+                    console.log('RAG Result received:', !!ragResult);
+                }
                 
                 // 添加调试日志
                 if (process.env.DEBUG) {
