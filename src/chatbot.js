@@ -6,6 +6,7 @@ import ragService from './services/rag-service-singleton.js';
 import userStore from './services/user-store-singleton.js';
 import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
+import eventManager from './services/event-manager.js';
 
 dotenv.config();
 
@@ -17,6 +18,29 @@ await Promise.all([
     db.initialize(),
     userStore.initialize()
 ]);
+
+// 监听 RAG 状态变化事件
+eventManager.on('rag:stateLoaded', (state) => {
+    if (process.env.DEBUG === 'true') {
+        console.log('RAG 状态已加载:', state);
+    }
+    isRagEnabled = state.enabled;
+    ragMode = state.mode;
+});
+
+eventManager.on('rag:modeChanged', (event) => {
+    if (process.env.DEBUG === 'true') {
+        console.log(`RAG 模式从 ${event.oldMode} 切换到 ${event.newMode}`);
+    }
+    ragMode = event.newMode;
+});
+
+eventManager.on('rag:enabledChanged', (event) => {
+    if (process.env.DEBUG === 'true') {
+        console.log(`RAG 状态从 ${event.oldValue} 切换到 ${event.newValue}`);
+    }
+    isRagEnabled = event.newValue;
+});
 
 // 配置
 const CONFIG = {
@@ -81,7 +105,9 @@ export async function toggleRag(enable = null, mode = null) {
                 message: '无效的查询模式，只支持 single 或 multi'
             };
         }
-        ragMode = mode;
+        
+        // 通过 RAG 服务设置模式，这会触发事件
+        ragService.mode = mode;
         
         // 如果切换到多知识库模式，确保加载所有知识库
         if (mode === 'multi' && newState) {
@@ -106,7 +132,9 @@ export async function toggleRag(enable = null, mode = null) {
         }
     }
     
-    isRagEnabled = newState;
+    // 通过 RAG 服务设置启用状态，这会触发事件
+    ragService.enabled = newState;
+    
     return {
         success: true,
         enabled: isRagEnabled,

@@ -5,6 +5,7 @@ import { Document } from "@langchain/core/documents";
 import dotenv from 'dotenv';
 import fs from 'fs/promises';
 import path from 'path';
+import eventManager from './event-manager.js';
 
 dotenv.config();
 
@@ -44,8 +45,49 @@ export class RAGService {
         
         this.vectorStores = new Map(); // 存储多个知识库的向量存储
         this.currentKnowledgeBase = null; // 当前激活的知识库名称
-        this.enabled = true; // RAG 服务启用状态
+        this._enabled = true; // RAG 服务启用状态
         this._mode = 'single'; // RAG 服务模式
+
+        // 初始化状态持久化
+        this._loadState();
+    }
+
+    // 状态持久化方法
+    async _saveState() {
+        try {
+            const state = {
+                enabled: this._enabled,
+                mode: this._mode,
+                currentKnowledgeBase: this.currentKnowledgeBase
+            };
+            await fs.writeFile(
+                path.join(process.cwd(), 'rag-state.json'),
+                JSON.stringify(state, null, 2)
+            );
+        } catch (error) {
+            console.error('保存 RAG 状态失败:', error);
+        }
+    }
+
+    async _loadState() {
+        try {
+            const statePath = path.join(process.cwd(), 'rag-state.json');
+            const data = await fs.readFile(statePath, 'utf8');
+            const state = JSON.parse(data);
+            this._enabled = state.enabled;
+            this._mode = state.mode;
+            this.currentKnowledgeBase = state.currentKnowledgeBase;
+            
+            // 发出状态加载事件
+            eventManager.emit('rag:stateLoaded', {
+                enabled: this._enabled,
+                mode: this._mode,
+                currentKnowledgeBase: this.currentKnowledgeBase
+            });
+        } catch (error) {
+            // 如果文件不存在，使用默认值
+            console.log('使用默认 RAG 状态');
+        }
     }
 
     // 模式的 getter 和 setter
@@ -53,12 +95,40 @@ export class RAGService {
         return this._mode;
     }
 
-    set mode(value) {
-        const validModes = ['single', 'multi'];
-        if (!validModes.includes(value)) {
-            throw new Error(`无效的模式: ${value}。有效的模式包括: ${validModes.join(', ')}`);
+    set mode(newMode) {
+        if (newMode !== 'single' && newMode !== 'multi') {
+            throw new Error('无效的 RAG 模式。支持的模式: single, multi');
         }
-        this._mode = value;
+        const oldMode = this._mode;
+        this._mode = newMode;
+        
+        // 发出模式变更事件
+        eventManager.emit('rag:modeChanged', {
+            oldMode,
+            newMode,
+            timestamp: new Date()
+        });
+        
+        this._saveState();
+    }
+
+    // 启用状态的 getter 和 setter
+    get enabled() {
+        return this._enabled;
+    }
+
+    set enabled(value) {
+        const oldValue = this._enabled;
+        this._enabled = value;
+        
+        // 发出状态变更事件
+        eventManager.emit('rag:enabledChanged', {
+            oldValue,
+            newValue: value,
+            timestamp: new Date()
+        });
+        
+        this._saveState();
     }
 
     // 获取所有知识库列表
