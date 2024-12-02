@@ -49,15 +49,19 @@ export class RAGService {
     // 获取所有知识库列表
     async listKnowledgeBases() {
         try {
-            const files = await fs.readdir(this.knowledgeBasePath);
-            return files
+            const docsPath = path.join(process.cwd(), 'docs');
+            const files = await fs.readdir(docsPath);
+            const kbs = files
                 .filter(file => file.endsWith('.txt'))
                 .map(file => ({
                     name: path.basename(file, '.txt'),
-                    path: path.join(this.knowledgeBasePath, file)
+                    path: path.join(docsPath, file),
+                    active: this.currentKnowledgeBase === path.basename(file, '.txt') || 
+                           this.vectorStores.has(path.basename(file, '.txt'))
                 }));
+            return kbs;
         } catch (error) {
-            console.error('获取知识库列表失败:', error);
+            console.error('Error listing knowledge bases:', error);
             return [];
         }
     }
@@ -130,13 +134,49 @@ export class RAGService {
         }
     }
 
+    // 加载所有知识库
+    async loadAllKnowledgeBases() {
+        try {
+            const kbs = await this.listKnowledgeBases();
+            console.log(`开始加载 ${kbs.length} 个知识库...`);
+            
+            for (const kb of kbs) {
+                if (!this.vectorStores.has(kb.name)) {
+                    console.log(`加载知识库: ${kb.name}`);
+                    await this.initializeKnowledgeBase(kb.path, kb.name);
+                }
+            }
+            
+            return {
+                success: true,
+                message: `成功加载 ${this.vectorStores.size} 个知识库`
+            };
+        } catch (error) {
+            console.error('加载知识库失败:', error);
+            return {
+                success: false,
+                message: error.message
+            };
+        }
+    }
+
     // 获取 RAG 服务状态
     async getStatus() {
+        const kbs = Array.from(this.vectorStores.keys());
+        const docCount = kbs.reduce((total, kb) => {
+            const store = this.vectorStores.get(kb);
+            return total + (store?.memoryVectors?.length || 0);
+        }, 0);
+
+        // 在多知识库模式下，显示所有已加载的知识库
+        const currentKB = kbs.length > 1 ? 
+            kbs.join(', ') : 
+            (this.currentKnowledgeBase || null);
+
         return {
-            isInitialized: this.currentKnowledgeBase !== null,
-            currentKnowledgeBase: this.currentKnowledgeBase,
-            documentCount: this.currentKnowledgeBase ? 
-                this.vectorStores.get(this.currentKnowledgeBase)?.memoryVectors?.length || 0 : 0,
+            isInitialized: this.vectorStores.size > 0,
+            currentKnowledgeBase: currentKB,
+            docCount,
             chunkSize: this.config.chunkSize,
             chunkOverlap: this.config.chunkOverlap
         };
@@ -152,7 +192,14 @@ export class RAGService {
     }
 
     // 处理消息
-    async processMessage(message) {
+    async processMessage(message, options = {}) {
+        const { mode = 'single' } = options;  // 'single' 或 'multi'
+        
+        if (mode === 'multi') {
+            return this.multiSearch(message);
+        }
+        
+        // 单知识库模式
         const status = await this.getKnowledgeBaseStatus();
         if (!status.isInitialized) {
             throw new Error('没有激活的知识库');
@@ -169,9 +216,9 @@ export class RAGService {
         const relevantDocs = results
             .filter(([_, score]) => score >= this.config.minRelevanceScore)
             .map(([doc, score]) => ({
-                pageContent: doc.pageContent,
+                content: doc.pageContent,
                 score: score,
-                scoreDisplay: (score * 100).toFixed(1) + '%'
+                knowledgeBase: this.currentKnowledgeBase
             }))
             .sort((a, b) => b.score - a.score);
 
@@ -181,7 +228,9 @@ export class RAGService {
 
         // 构建引用文本
         const references = relevantDocs
-            .map((doc, index) => `\n引用 ${index + 1} (相关度: ${doc.scoreDisplay}):\n${doc.pageContent}`)
+            .map((doc, index) => 
+                `\n引用 ${index + 1} (知识库: ${doc.knowledgeBase}, 相关度: ${(doc.score * 100).toFixed(1)}%):\n${doc.content}`
+            )
             .join('\n');
 
         // 返回结果
@@ -193,7 +242,83 @@ export class RAGService {
                 matchCount: relevantDocs.length,
                 references: relevantDocs.map((doc, index) => ({
                     id: index + 1,
-                    score: doc.score
+                    score: doc.score,
+                    knowledgeBase: doc.knowledgeBase,
+                    excerpt: doc.content
+                }))
+            }
+        };
+    }
+
+    // 多知识库并行查询
+    async multiSearch(message) {
+        // 确保所有知识库已加载
+        const loadResult = await this.loadAllKnowledgeBases();
+        if (!loadResult.success) {
+            throw new Error(`加载知识库失败: ${loadResult.message}`);
+        }
+        
+        // 获取所有已加载的知识库
+        const activeKbs = Array.from(this.vectorStores.keys());
+        if (activeKbs.length === 0) {
+            throw new Error('没有可用的知识库');
+        }
+
+        console.log(`开始并行查询 ${activeKbs.length} 个知识库:`, activeKbs);
+        
+        // 并行执行查询
+        const results = await Promise.all(
+            activeKbs.map(async kbName => {
+                try {
+                    const vectorStore = this.vectorStores.get(kbName);
+                    const searchResults = await vectorStore.similaritySearchWithScore(
+                        message, 
+                        this.config.maxRetrievedDocs
+                    );
+                    
+                    // 为每个结果添加来源信息
+                    return searchResults.map(([doc, score]) => ({
+                        content: doc.pageContent,
+                        score: score,
+                        knowledgeBase: kbName
+                    }));
+                } catch (error) {
+                    console.error(`查询知识库 ${kbName} 失败:`, error);
+                    return [];
+                }
+            })
+        );
+        
+        // 合并结果并排序
+        const mergedResults = results
+            .flat()
+            .filter(result => result.score >= this.config.minRelevanceScore)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, this.config.maxRetrievedDocs);
+
+        if (mergedResults.length === 0) {
+            throw new Error('没有找到相关的知识库内容');
+        }
+
+        // 构建引用文本
+        const references = mergedResults
+            .map((doc, index) => 
+                `\n引用 ${index + 1} (知识库: ${doc.knowledgeBase}, 相关度: ${(doc.score * 100).toFixed(1)}%):\n${doc.content}`
+            )
+            .join('\n');
+
+        // 返回结果
+        return {
+            context: references,
+            documents: mergedResults,
+            metadata: {
+                knowledgeBases: activeKbs,
+                matchCount: mergedResults.length,
+                references: mergedResults.map((doc, index) => ({
+                    id: index + 1,
+                    score: doc.score,
+                    knowledgeBase: doc.knowledgeBase,
+                    excerpt: doc.content
                 }))
             }
         };

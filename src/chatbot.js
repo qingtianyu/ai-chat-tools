@@ -45,6 +45,7 @@ const CONFIG = {
 
 // RAG模式状态
 let isRagEnabled = false;
+let ragMode = 'single';  // 'single' 或 'multi'
 
 // 检查 RAG 服务状态
 async function checkRagStatus() {
@@ -65,45 +66,53 @@ async function checkRagStatus() {
  * 切换RAG模式
  * @returns {Promise<Object>} 返回切换结果，包含状态和消息
  */
-export async function toggleRag() {
-    try {
-        // 尝试切换状态
-        const newState = !isRagEnabled;
-        
-        if (newState) {
-            // 确保RAG服务已初始化
-            const status = await checkRagStatus();
-            if (!status.currentKnowledgeBase || !status.isInitialized) {
-                return {
-                    success: false,
-                    enabled: false,
-                    message: '请先使用 kb switch 命令选择一个知识库'
-                };
-            }
-            isRagEnabled = true;
+export async function toggleRag(enable = null, mode = null) {
+    console.log('Toggling RAG mode:', enable, 'Mode:', mode);
+    const status = await checkRagStatus();
+    
+    // 处理开关状态
+    const newState = enable === null ? !isRagEnabled : enable;
+    
+    // 处理模式切换
+    if (mode) {
+        if (mode !== 'single' && mode !== 'multi') {
             return {
-                success: true,
-                enabled: true,
-                message: `🧠 RAG模式已启用，使用知识库 "${status.currentKnowledgeBase}" 增强对话`,
-                knowledgeBase: status.currentKnowledgeBase
-            };
-        } else {
-            isRagEnabled = false;
-            return {
-                success: true,
-                enabled: false,
-                message: '💬 已切换到普通对话模式'
+                success: false,
+                message: '无效的查询模式，只支持 single 或 multi'
             };
         }
-    } catch (error) {
-        // 确保在发生错误时重置状态
-        isRagEnabled = false;
-        return {
-            success: false,
-            enabled: false,
-            message: `❌ RAG模式切换失败: ${error.message}`
-        };
+        ragMode = mode;
+        
+        // 如果切换到多知识库模式，确保加载所有知识库
+        if (mode === 'multi' && newState) {
+            const loadResult = await ragService.loadAllKnowledgeBases();
+            if (!loadResult.success) {
+                return {
+                    success: false,
+                    message: `无法加载知识库: ${loadResult.message}`
+                };
+            }
+            console.log(loadResult.message);
+        }
     }
+    
+    if (newState) {
+        // 确保RAG服务已初始化
+        if (!status.currentKnowledgeBase && ragMode === 'single') {
+            return {
+                success: false,
+                message: '请先使用 kb switch 选择一个知识库'
+            };
+        }
+    }
+    
+    isRagEnabled = newState;
+    return {
+        success: true,
+        enabled: isRagEnabled,
+        mode: ragMode,
+        message: `RAG ${isRagEnabled ? '已开启' : '已关闭'}${isRagEnabled ? ` (${ragMode} 模式)` : ''}`
+    };
 }
 
 export async function chat(userMessage, userId, conversationId) {
@@ -138,22 +147,23 @@ export async function chat(userMessage, userId, conversationId) {
         if (isRagEnabled) {
             try {
                 console.log('Attempting RAG processing...');
+                console.log('Current RAG mode:', ragMode);
+                
                 // 使用RAG处理消息
-                const ragResult = await ragService.processMessage(userMessage);
+                const ragResult = await ragService.processMessage(userMessage, { mode: ragMode });
                 console.log('RAG Result received:', !!ragResult);
                 
                 // 添加调试日志
                 console.log('\n=== RAG 检索结果 ===');
-                console.log('知识库:', ragResult.metadata?.knowledgeBase);
-                console.log('匹配文档数:', ragResult.metadata?.matchCount);
-                console.log('Documents:', ragResult.documents ? ragResult.documents.length : 0);
+                console.log('查询的知识库:', ragResult.metadata.knowledgeBases.join(', '));
+                console.log('匹配文档数:', ragResult.metadata.matchCount);
+                console.log('Documents:', ragResult.documents.length);
                 
                 if (ragResult.documents?.length > 0) {
-                    console.log('相关度分数:', ragResult.documents.map(doc => `${(doc.score * 100).toFixed(1)}%`).join(', '));
                     console.log('\n检索到的内容片段:');
                     ragResult.documents.forEach((doc, index) => {
-                        console.log(`\n片段 ${index + 1} (相关度: ${(doc.score * 100).toFixed(1)}%):`);
-                        console.log(doc.pageContent);
+                        console.log(`\n片段 ${index + 1} (知识库: ${doc.knowledgeBase}, 相关度: ${(doc.score * 100).toFixed(1)}%):`);
+                        console.log(doc.content);
                     });
                 } else {
                     console.log('Warning: No documents found in RAG result');
@@ -203,12 +213,12 @@ export async function chat(userMessage, userId, conversationId) {
                     messages: conversationHistory,
                     metadata: {
                         mode: 'rag',
-                        knowledgeBase: ragResult.metadata.knowledgeBase,
-                        matchCount: ragResult.documents.length,
+                        knowledgeBase: ragResult.metadata.knowledgeBases.join(', '),
+                        matchCount: ragResult.metadata.matchCount,
                         references: ragResult.documents.map((doc, index) => ({
                             id: index + 1,
                             score: doc.score,
-                            excerpt: doc.pageContent
+                            excerpt: doc.content
                         })),
                         context: ragResult.context
                     },

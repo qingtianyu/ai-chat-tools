@@ -67,11 +67,13 @@ function showWelcome() {
     console.log(chalk.yellow('- list:    📜 查看历史对话'));
     console.log(chalk.yellow('- name:    👤 设置用户名'));
     console.log(chalk.yellow('- rag:     🧠 切换专业知识模式'));
+    console.log(chalk.yellow('  • rag single       单知识库模式 (需要先用 kb switch 选择)'));
+    console.log(chalk.yellow('  • rag multi        多知识库模式 (自动使用所有知识库)'));
     console.log(chalk.yellow('- kb:      📚 知识库管理'));
     console.log(chalk.yellow('  • kb list          列出所有知识库'));
     console.log(chalk.yellow('  • kb add <path>    添加新知识库'));
-    console.log(chalk.yellow('  • kb del <name>    删除知识库'));
-    console.log(chalk.yellow('  • kb switch <name> 切换知识库'));
+    console.log(chalk.yellow('  • kb del <n>       删除知识库'));
+    console.log(chalk.yellow('  • kb switch <n>    切换知识库'));
     console.log(chalk.yellow('  • kb status        查看知识库状态'));
     console.log(chalk.yellow('- clear:   🧹 清除屏幕'));
     console.log(chalk.yellow('- init:    🔄 初始化系统 (清除所有数据)'));
@@ -189,9 +191,18 @@ async function handleInput(input) {
             return true;
         case 'rag':
             startThinking('切换模式');
-            const currentStatus = await toggleRag(!isRagEnabled);
+            let mode = null;
+            if (args.length > 1) {
+                mode = args[1].toLowerCase();
+                if (mode !== 'single' && mode !== 'multi') {
+                    stopThinking();
+                    console.log(chalk.red('❌ 无效的模式，只支持 single 或 multi'));
+                    return true;
+                }
+            }
+            const currentStatus = await toggleRag(!isRagEnabled, mode);
             stopThinking();
-            console.log(chalk.green(`\n🧠 专业知识模式已${currentStatus ? '开启' : '关闭'}`));
+            console.log(chalk.green(`\n🧠 ${currentStatus.message}`));
             return true;
         case 'kb':
             if (args.length < 2) {
@@ -207,15 +218,10 @@ async function handleInput(input) {
                     case 'list':
                         const kbs = await ragService.listKnowledgeBases();
                         stopThinking();
-                        console.log(chalk.blue('\n📚 知识库列表:'));
-                        if (kbs.length === 0) {
-                            console.log(chalk.gray('  暂无知识库'));
-                        } else {
-                            kbs.forEach(kb => {
-                                const isActive = kb.name === ragService.currentKnowledgeBase;
-                                console.log(chalk.cyan(`  ${isActive ? '✓' : ' '} ${kb.name}`));
-                            });
-                        }
+                        console.log('\n📚 知识库列表:');
+                        kbs.forEach(kb => {
+                            console.log(`  ${kb.active ? '✓' : ' '} ${kb.name}`);
+                        });
                         break;
                         
                     case 'add':
@@ -260,18 +266,15 @@ async function handleInput(input) {
                         break;
                         
                     case 'status':
+                        startThinking('获取状态');
                         const status = await ragService.getStatus();
                         stopThinking();
-                        console.log(chalk.cyan('\n📊 知识库状态:'));
-                        console.log(chalk.gray(`  当前知识库: ${status.currentKnowledgeBase || '无'}`));
-                        if (status.isInitialized) {
-                            console.log(chalk.gray(`  文档数量: ${status.documentCount || 0}`));
-                            console.log(chalk.gray(`  分块大小: ${status.chunkSize || 1000}`));
-                            console.log(chalk.gray(`  块重叠: ${status.chunkOverlap || 200}`));
-                        } else {
-                            console.log(chalk.yellow('  状态: 未初始化'));
-                        }
-                        break;
+                        console.log('\n📊 知识库状态:');
+                        console.log('  当前知识库:', status.currentKnowledgeBase || '未选择');
+                        console.log('  文档数量:', status.docCount);
+                        console.log('  分块大小:', status.chunkSize);
+                        console.log('  块重叠:', status.chunkOverlap);
+                        return true;
 
                     default:
                         stopThinking();
