@@ -135,20 +135,20 @@ export class RAGService {
             console.log(`找到 ${txtFiles.length} 个系统知识库文件`);
             
             // 加载每个文件
-            for (const file of txtFiles) {
+            const loadPromises = txtFiles.map(async file => {
                 const name = path.basename(file, '.txt');
                 const filePath = path.join(this.knowledgeBasePath, file);
                 
                 // 如果用户知识库中已存在同名知识库，跳过
                 if (this.userKnowledgeBases.has(name)) {
                     console.log(`跳过系统知识库 "${name}"：用户知识库中存在同名知识库`);
-                    continue;
+                    return;
                 }
                 
                 // 如果系统知识库已加载，跳过
                 if (this.systemKnowledgeBases.has(name)) {
                     console.log(`跳过系统知识库 "${name}"：已加载`);
-                    continue;
+                    return;
                 }
                 
                 try {
@@ -175,7 +175,10 @@ export class RAGService {
                 } catch (error) {
                     console.error(`加载系统知识库 "${name}" 失败:`, error);
                 }
-            }
+            });
+            
+            // 等待所有知识库加载完成
+            await Promise.all(loadPromises);
             
             // 如果没有任何知识库且加载了系统知识库，自动激活第一个
             const allKbs = this._getMergedKnowledgeBases();
@@ -186,6 +189,12 @@ export class RAGService {
             
             // 加载完成后设置标志
             this._systemKnowledgeBasesLoaded = true;
+            
+            // 发出加载完成事件
+            eventManager.emit('rag:systemKnowledgeBasesLoaded', {
+                count: this.systemKnowledgeBases.size,
+                timestamp: new Date()
+            });
             
         } catch (error) {
             console.error('加载系统知识库失败:', error);
@@ -216,7 +225,8 @@ export class RAGService {
         
         // 如果切换到 multi 模式，自动加载系统知识库
         if (newMode === 'multi' && !this._systemKnowledgeBasesLoaded) {
-            this._loadSystemKnowledgeBases().catch(error => {
+            // 返回 Promise 以便外部等待加载完成
+            return this._loadSystemKnowledgeBases().catch(error => {
                 console.error('加载系统知识库失败:', error);
             });
         }

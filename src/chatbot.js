@@ -106,8 +106,27 @@ export async function toggleRag(enable = null, mode = null) {
             };
         }
         
-        // 通过 RAG 服务设置模式，这会触发事件和自动加载系统知识库
-        ragService.mode = mode;
+        // 等待模式切换和系统知识库加载完成
+        const modeChangePromise = ragService.mode = mode;
+        if (modeChangePromise instanceof Promise) {
+            await modeChangePromise;
+        }
+        
+        // 如果是切换到 multi 模式，等待系统知识库加载完成
+        if (mode === 'multi') {
+            await new Promise(resolve => {
+                const listener = () => {
+                    eventManager.off('rag:systemKnowledgeBasesLoaded', listener);
+                    resolve();
+                };
+                eventManager.once('rag:systemKnowledgeBasesLoaded', listener);
+                
+                // 如果已经加载完成，直接返回
+                if (ragService._systemKnowledgeBasesLoaded) {
+                    resolve();
+                }
+            });
+        }
     }
     
     if (newState) {
