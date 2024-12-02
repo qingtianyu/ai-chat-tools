@@ -1,0 +1,38 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// 对话模型
+model Conversation {
+  id        String    @id @default(uuid())
+  userId    String    // 用户标识
+  messages  Message[] // 关联的消息
+  summary   String?   // 当前对话的摘要
+  metadata  String?   // 额外的元数据，JSON格式
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+// 消息模型
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String       // 关联的对话ID
+  content        String       // 消息内容
+  role          String       // 消息角色：user/assistant
+  isSummary     Boolean      @default(false) // 是否是摘要
+  metadata      String?      // 额外的元数据，JSON格式
+  createdAt     DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
