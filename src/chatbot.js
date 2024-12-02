@@ -1,5 +1,4 @@
 import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { ChatOpenAI } from '@langchain/openai';
 import { DatabaseService } from './services/database.js';
 import ragService from './services/rag-service-singleton.js';
