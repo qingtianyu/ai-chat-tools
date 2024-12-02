@@ -86,10 +86,83 @@ function showWelcome() {
     console.log('');
 }
 
+// 从数据库获取会话列表
+async function getConversationsFromDB() {
+    try {
+        console.log('DEBUG: 尝试从数据库获取会话...');
+        console.log('DEBUG: currentUserId =', currentUserId);
+        const conversations = await db.getUserConversations(currentUserId);
+        console.log('DEBUG: 数据库会话数量:', conversations?.length || 0);
+        return conversations;
+    } catch (error) {
+        console.error('从数据库获取会话失败:', error);
+        return null;
+    }
+}
+
+// 从 UserStore 获取会话列表
+async function getConversationsFromStore() {
+    try {
+        console.log('DEBUG: 尝试从 UserStore 获取会话...');
+        console.log('DEBUG: currentUserId =', currentUserId);
+        const user = await userStore.getUserData(currentUserId);
+        
+        if (!user) {
+            console.log('DEBUG: 未找到用户数据');
+            return null;
+        }
+        
+        console.log('DEBUG: 用户数据:', {
+            id: user.id,
+            conversationsCount: user.conversations?.length || 0,
+            hasConversations: !!user.conversations
+        });
+        
+        if (!user.conversations) {
+            console.log('DEBUG: 用户没有会话记录');
+            return [];
+        }
+
+        const formattedConversations = user.conversations.map(conv => ({
+            id: conv.id,
+            createdAt: conv.messages[0]?.timestamp || conv.created || Date.now(),
+            firstMessage: conv.messages[0]?.content,
+            lastMessage: conv.messages[conv.messages.length - 1]?.content,
+            messageCount: conv.messages.length
+        }));
+        
+        console.log('DEBUG: 格式化后的会话:', {
+            count: formattedConversations.length,
+            firstConversation: formattedConversations[0] ? {
+                id: formattedConversations[0].id,
+                messageCount: formattedConversations[0].messageCount
+            } : null
+        });
+            
+        return formattedConversations;
+    } catch (error) {
+        console.error('从 UserStore 获取会话失败:', error);
+        console.error('错误详情:', error.stack);
+        return null;
+    }
+}
+
 // 显示历史对话列表
 async function showConversationList() {
-    const conversations = await db.getUserConversations(currentUserId);
-    if (conversations.length === 0) {
+    console.log('DEBUG: 开始获取会话列表...');
+    
+    // 优先从数据库获取，如果失败或为空则从 UserStore 获取
+    let conversations = await getConversationsFromDB();
+    console.log('DEBUG: 数据库获取结果:', conversations ? `成功，获取到 ${conversations.length} 条会话` : '失败');
+    
+    if (!conversations || conversations.length === 0) {
+        console.log('DEBUG: 数据库无数据，尝试从 UserStore 获取...');
+        conversations = await getConversationsFromStore();
+        console.log('DEBUG: UserStore 获取结果:', 
+            conversations ? `成功，获取到 ${conversations.length} 条会话` : '失败');
+    }
+    
+    if (!conversations || conversations.length === 0) {
         console.log(chalk.yellow('\n📭 暂无历史对话\n'));
         return null;
     }
@@ -98,6 +171,9 @@ async function showConversationList() {
     conversations.forEach((conv, index) => {
         const date = new Date(conv.createdAt).toLocaleString();
         console.log(chalk.yellow(`\n${index + 1}. 📅 ${date}`));
+        // 显示完整会话ID
+        console.log(chalk.gray(`🔑 ID: ${conv.id}`));
+        
         if (conv.firstMessage) {
             console.log(chalk.gray('🎯 开始: ') + conv.firstMessage.substring(0, 50) + (conv.firstMessage.length > 50 ? '...' : ''));
         }
