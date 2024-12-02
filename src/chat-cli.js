@@ -219,12 +219,24 @@ async function handleInput(input) {
             try {
                 switch (subCommand) {
                     case 'list':
-                        const kbs = await ragService.listKnowledgeBases();
-                        stopThinking();
-                        console.log('\n📚 知识库列表:');
-                        kbs.forEach(kb => {
-                            console.log(`  ${kb.active ? '✓' : ' '} ${kb.name}`);
-                        });
+                        try {
+                            const status = await ragService.getKnowledgeBaseStatus();
+                            const kbs = status.loadedKnowledgeBases;
+                            stopThinking();
+                            console.log('\n\n📚 知识库列表:');
+                            if (kbs.length === 0) {
+                                console.log(chalk.yellow('  暂无知识库'));
+                            } else {
+                                for (const kb of kbs) {
+                                    // 在多知识库模式下全部选中，单知识库模式下只选中当前知识库
+                                    const isActive = status.mode === 'multi' || kb === status.currentKnowledgeBase;
+                                    console.log(`  ${isActive ? '✓' : ' '} ${kb}`);
+                                }
+                            }
+                        } catch (error) {
+                            stopThinking();
+                            console.log(chalk.red('\n❌ 获取知识库列表失败：' + error.message));
+                        }
                         break;
                         
                     case 'add':
@@ -234,10 +246,13 @@ async function handleInput(input) {
                             return true;
                         }
                         const filePath = args[1];
-                        const name = args[2]; // 可选的知识库名称
-                        const result = await ragService.addKnowledgeBase(filePath, name);
+                        const result = await ragService.addKnowledgeBase(filePath);
                         stopThinking();
-                        console.log(chalk.green(`\n✅ 知识库 "${result.name}" 添加成功`));
+                        if (result.success) {
+                            console.log(chalk.green(`\n✅ ${result.message}`));
+                        } else {
+                            console.log(chalk.red(`\n❌ ${result.message}`));
+                        }
                         break;
                         
                     case 'del':
@@ -270,13 +285,19 @@ async function handleInput(input) {
                         
                     case 'status':
                         startThinking('获取状态');
-                        const status = await ragService.getStatus();
+                        const status = await ragService.getKnowledgeBaseStatus();
+                        const ragStatus = await ragService.getStatus();
                         stopThinking();
-                        console.log('\n📊 知识库状态:');
-                        console.log('  当前知识库:', status.currentKnowledgeBase || '未选择');
-                        console.log('  文档数量:', status.documentCount);
-                        console.log('  分块大小:', status.chunkSize);
-                        console.log('  块重叠:', status.chunkOverlap);
+                        console.log('\n\n📊 知识库状态:');
+                        console.log(`  当前知识库: ${status.currentKnowledgeBase}`);
+                        if (status.loadedKnowledgeBases.length > 0) {
+                            console.log(`  已加载知识库: ${status.loadedKnowledgeBases.join(', ')}`);
+                        }
+                        console.log(`  知识库模式: ${status.mode === 'single' ? '单知识库' : '多知识库'}`);
+                        console.log(`  RAG 状态: ${status.enabled ? '已启用' : '已禁用'}`);
+                        console.log(`  文档数量: ${ragStatus.documentCount}`);
+                        console.log(`  分块大小: ${ragStatus.chunkSize}`);
+                        console.log(`  块重叠: ${ragStatus.chunkOverlap}`);
                         return true;
 
                     default:
@@ -381,6 +402,23 @@ async function handleInput(input) {
             currentConversationId = response.conversationId;
             return true;
     }
+}
+
+// 处理 kb status 命令
+async function handleKbStatus() {
+    const status = await ragService.getKnowledgeBaseStatus();
+    const ragStatus = await ragService.getStatus();
+    
+    console.log('\n\n📊 知识库状态:');
+    console.log(`  当前知识库: ${status.currentKnowledgeBase}`);
+    if (status.loadedKnowledgeBases.length > 0) {
+        console.log(`  已加载知识库: ${status.loadedKnowledgeBases.join(', ')}`);
+    }
+    console.log(`  知识库模式: ${status.mode === 'single' ? '单知识库' : '多知识库'}`);
+    console.log(`  RAG 状态: ${status.enabled ? '已启用' : '已禁用'}`);
+    console.log(`  文档数量: ${ragStatus.documentCount}`);
+    console.log(`  分块大小: ${ragStatus.chunkSize}`);
+    console.log(`  块重叠: ${ragStatus.chunkOverlap}`);
 }
 
 // 主循环

@@ -1,5 +1,5 @@
 {
   "enabled": true,
-  "mode": "single",
-  "currentKnowledgeBase": "test-kb"
+  "mode": "multi",
+  "currentKnowledgeBase": "agent-article"
 }

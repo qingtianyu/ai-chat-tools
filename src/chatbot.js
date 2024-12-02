@@ -106,20 +106,8 @@ export async function toggleRag(enable = null, mode = null) {
             };
         }
         
-        // 通过 RAG 服务设置模式，这会触发事件
+        // 通过 RAG 服务设置模式，这会触发事件和自动加载系统知识库
         ragService.mode = mode;
-        
-        // 如果切换到多知识库模式，确保加载所有知识库
-        if (mode === 'multi' && newState) {
-            const loadResult = await ragService.loadAllKnowledgeBases();
-            if (!loadResult.success) {
-                return {
-                    success: false,
-                    message: `无法加载知识库: ${loadResult.message}`
-                };
-            }
-            console.log(loadResult.message);
-        }
     }
     
     if (newState) {
