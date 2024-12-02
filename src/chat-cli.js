@@ -4,6 +4,7 @@ import userStore from './services/user-store-singleton.js';
 import { DatabaseService } from './services/database.js';
 import { InitService } from './services/init-service.js';
 import ragService from './services/rag-service-singleton.js';
+import agentToolService from './services/agent-tool-service.js';
 import chalk from 'chalk';
 import fs from 'fs/promises';  // 使用 promises API
 
@@ -70,6 +71,7 @@ function showWelcome() {
     console.log(chalk.yellow('- new:     ✨ 开始新对话'));
     console.log(chalk.yellow('- list:    📜 查看历史对话'));
     console.log(chalk.yellow('- name:    👤 设置用户名'));
+    console.log(chalk.yellow('- tools:   🛠️  查看已注册工具'));
     console.log(chalk.yellow('- rag:     🧠 切换专业知识模式'));
     console.log(chalk.yellow('  • rag single       单知识库模式 (需要先用 kb switch 选择)'));
     console.log(chalk.yellow('  • rag multi        多知识库模式 (自动使用所有知识库)'));
@@ -353,6 +355,18 @@ async function handleInput(input) {
             stopThinking();
             console.log(chalk.green(`\n🧠 ${currentStatus.message}`));
             return true;
+        case 'tools':
+            console.log(chalk.blue('\n=== 🛠️ 已注册工具列表 ===\n'));
+            const tools = agentToolService.getTools();
+            tools.forEach((tool, index) => {
+                console.log(chalk.green(`${index + 1}. ${tool.name}`));
+                console.log(chalk.gray(`   描述: ${tool.description}`));
+                if (tool.schema) {
+                    console.log(chalk.gray(`   参数: ${JSON.stringify(tool.schema.parameters)}`));
+                }
+                console.log('');
+            });
+            break;
         case 'kb':
             if (args.length < 1) {
                 console.log(chalk.red('❌ 请指定知识库操作：list, add, del, switch, status'));

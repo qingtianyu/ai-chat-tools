@@ -1,8 +1,10 @@
 import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
+import toolServiceIntegration from './services/tool-service-integration.js';
 import { ChatOpenAI } from '@langchain/openai';
 import { DatabaseService } from './services/database.js';
 import ragService from './services/rag-service-singleton.js';
 import userStore from './services/user-store-singleton.js';
+import agentToolService from './services/agent-tool-service.js';
 import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 import eventManager from './services/event-manager.js';
@@ -151,6 +153,63 @@ export async function toggleRag(enable = null, mode = null) {
 
 export async function chat(userMessage, userId, conversationId) {
     try {
+        // 检测是否是工具命令
+        const toolType = toolServiceIntegration.getToolType(userMessage);
+        if (toolType) {
+            const result = await toolServiceIntegration.executeToolCommand(userMessage);
+            
+            // 获取或创建用户
+            let user = await getUser(userId);
+            if (!user) {
+                user = await createUser(userId);
+            }
+
+            // 获取或创建会话
+            let conversation;
+            if (conversationId) {
+                conversation = user.conversations.find(c => c.id === conversationId);
+                if (!conversation) {
+                    throw new Error(`会话 ${conversationId} 未找到`);
+                }
+            } else {
+                conversation = {
+                    id: uuidv4(),
+                    messages: []
+                };
+                user.conversations.push(conversation);
+            }
+
+            // 构建工具响应
+            const toolMessage = result.success ? 
+                { role: 'assistant', content: result.output } :
+                { role: 'assistant', content: `执行失败: ${result.error}` };
+
+            // 更新会话历史
+            conversation.messages.push(
+                { role: 'user', content: userMessage },
+                toolMessage
+            );
+
+            // 保持历史记录在合理范围内
+            if (conversation.messages.length > 10) {
+                conversation.messages.splice(0, conversation.messages.length - 10);
+            }
+
+            // 保存用户数据
+            await saveUser(user);
+
+            // 返回工具执行结果
+            return {
+                messages: conversation.messages,
+                metadata: { 
+                    mode: 'tool',
+                    toolType: result.toolType,
+                    success: result.success
+                },
+                conversationId: conversation.id
+            };
+        }
+
         // 获取或创建用户的对话历史
         let user = await getUser(userId);
         if (!user) {
