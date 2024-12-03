@@ -21,16 +21,9 @@ class UserService {
     async getUser(userId) {
         try {
             const userData = await userStore.getUserData(userId);
-            if (!userData) {
-                return null;
-            }
-            return userData;
+            return userData || null;
         } catch (error) {
-            throw new ChatError(
-                '获取用户数据失败',
-                ErrorCodes.USER_NOT_FOUND,
-                { userId }
-            );
+            return null;
         }
     }
 

@@ -3,6 +3,7 @@ import ConversationService from '../conversation/ConversationService.js';
 import UserService from '../user/UserService.js';
 import { RAGService } from '../rag-service.js';
 import RateLimiter from '../../utils/RateLimiter.js';
+import userStore from '../user-store-singleton.js'; // Add this line
 
 class ChatService {
     static #instance = null;
@@ -20,8 +21,12 @@ class ChatService {
         this.#messageProcessor = MessageProcessor.getInstance();
         this.#conversationService = ConversationService.getInstance();
         this.#userService = UserService.getInstance();
-        this.#ragService = RAGService.getInstance();
+        this.#ragService = new RAGService();
         this.rateLimiter = new RateLimiter();
+        
+        // 初始化用户存储和默认用户
+        this.#initUserStore().catch(console.error);
+        
         ChatService.#instance = this;
     }
 
@@ -30,6 +35,22 @@ class ChatService {
             ChatService.#instance = new ChatService();
         }
         return ChatService.#instance;
+    }
+
+    async #initUserStore() {
+        try {
+            // 初始化用户存储
+            await userStore.initialize();
+            
+            // 初始化默认用户
+            const defaultUserId = 'cli-user';
+            const user = await this.#userService.getUser(defaultUserId);
+            if (!user) {
+                await this.#userService.createUser(defaultUserId);
+            }
+        } catch (error) {
+            console.error('初始化用户存储或默认用户失败:', error);
+        }
     }
 
     async chat(userMessage, userId, conversationId) {

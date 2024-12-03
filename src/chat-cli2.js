@@ -7,6 +7,9 @@ const chatService = ChatService.getInstance();
 const userId = 'cli-user';
 let conversationId = null;
 
+// 等待初始化完成
+await new Promise(resolve => setTimeout(resolve, 1000));
+
 // 创建命令行接口
 const rl = readline.createInterface({
     input: process.stdin,
