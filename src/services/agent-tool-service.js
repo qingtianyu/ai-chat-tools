@@ -3,8 +3,7 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { createToolCallingAgent } from "langchain/agents";
 import { AgentExecutor } from "langchain/agents";
 import { ChatMessageHistory } from "@langchain/community/stores/message/in_memory";
-import { RunnableWithMessageHistory } from "@langchain/core/runnables";
-import { calculatorTool, timeTool, windowsCommandTool, fileOperationTool } from "../tools/systemTools.js";
+import { calculatorTool, timeTool, windowsCommandTool, fileOperationTool, WebBrowserTool, SearchTool, WebScraperTool } from "../tools/index.js";
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -22,12 +21,41 @@ export class AgentToolService {
             }
         });
 
+        // 初始化 web 工具
+        const webBrowser = new WebBrowserTool({ model: this.model });
+        const searchTool = new SearchTool();
+        const webScraper = new WebScraperTool();
+
         // 定义工具列表
-        this.tools = [calculatorTool, timeTool, windowsCommandTool, fileOperationTool];
+        this.tools = [
+            calculatorTool, 
+            timeTool, 
+            windowsCommandTool, 
+            fileOperationTool,
+            webBrowser,
+            searchTool,
+            webScraper
+        ];
 
         // 定义提示模板
         this.prompt = ChatPromptTemplate.fromMessages([
-            ["system", "你是一个智能助手，可以帮助用户完成各种任务。你会根据用户的需求，选择合适的工具来完成任务。"],
+            ["system", `你是一个智能助手，可以帮助用户完成各种任务。你会根据用户的需求，选择合适的工具来完成任务：
+
+- 时间查询：使用 time 工具
+  * 查询时间：使用 type: 'time'
+  * 查询日期：使用 type: 'date'
+  * 查询完整时间：使用 type: 'full'
+- 数学计算：使用 calculator 工具
+- 文件处理：使用 fileOperation 工具
+- 系统命令：使用 windowsCommand 工具
+- 网页浏览：使用 web_browser 工具（可提取内容、代码和生成摘要）
+- 搜索引擎：使用 web_search 工具（支持必应搜索）
+- 网页抓取：使用 web_scraper 工具（简单的网页内容获取）
+
+注意：对于时间查询，请根据用户的具体需求选择合适的类型：
+- "几点了"、"现在几点" → type: 'time'
+- "今天日期"、"几号了" → type: 'date'
+- "现在是什么时候" → type: 'full'`],
             ["human", "{input}"],
             ["assistant", "{agent_scratchpad}"]
         ]);
@@ -35,8 +63,9 @@ export class AgentToolService {
         // 初始化消息历史存储
         this.messageStore = {};
 
-        // 初始化 Agent
-        this.initializeAgent();
+        // 初始化标志
+        this.initialized = false;
+        this.initPromise = this.initializeAgent();
     }
 
     async initializeAgent() {
@@ -55,6 +84,9 @@ export class AgentToolService {
                 verbose: false
             });
 
+            this.initialized = true;
+            console.log('Agent 初始化成功');
+
         } catch (error) {
             console.error('初始化Agent失败:', error);
             throw error;
@@ -63,6 +95,11 @@ export class AgentToolService {
 
     async executeTask(input, sessionId = 'default') {
         try {
+            // 确保 Agent 已初始化
+            if (!this.initialized) {
+                await this.initPromise;
+            }
+
             if (!sessionId) {
                 sessionId = 'default';
             }

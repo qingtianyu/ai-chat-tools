@@ -4,10 +4,10 @@ import { ChatOpenAI } from '@langchain/openai';
 import { DatabaseService } from './services/database.js';
 import ragService from './services/rag-service-singleton.js';
 import userStore from './services/user-store-singleton.js';
-import agentToolService from './services/agent-tool-service.js';
 import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 import eventManager from './services/event-manager.js';
+import CONFIG from './config/index.js';
 
 dotenv.config();
 
@@ -19,6 +19,10 @@ await Promise.all([
     db.initialize(),
     userStore.initialize()
 ]);
+
+// RAG模式状态
+let isRagEnabled = false;
+let ragMode = 'single';  // 'single' 或 'multi'
 
 // 监听 RAG 状态变化事件
 eventManager.on('rag:stateLoaded', (state) => {
@@ -43,34 +47,6 @@ eventManager.on('rag:enabledChanged', (event) => {
     isRagEnabled = event.newValue;
 });
 
-// 配置
-const CONFIG = {
-    summaryThreshold: 30,
-    relevantMemories: 5,
-    maxConversationLength: 100,
-    defaultSystemPrompt: `你是一个专业、友好且功能强大的AI助手。你具有以下特点和要求：
-
-1. 知识渊博：你能够回答各种领域的问题
-2. 对话风格：
-   - 专业且简洁
-   - 使用markdown格式输出
-   - 适当使用emoji增加趣味性
-3. 特殊能力：
-   - 必须记住并使用用户提供的信息（如姓名、年龄等）
-   - 可以进行简单计算
-   - 擅长解释复杂概念
-   - 能够利用历史对话中的相关信息
-
-4. 记忆要求：
-   - 记住用户的个人信息和偏好
-   - 在对话中自然地引用这些信息
-   - 对矛盾的信息提出疑问
-   - 主动询问缺失的重要信息`
-};
-
-// RAG模式状态
-let isRagEnabled = false;
-let ragMode = 'single';  // 'single' 或 'multi'
 
 // 检查 RAG 服务状态
 async function checkRagStatus() {
@@ -153,63 +129,6 @@ export async function toggleRag(enable = null, mode = null) {
 
 export async function chat(userMessage, userId, conversationId) {
     try {
-        // 检测是否是工具命令
-        const toolType = toolServiceIntegration.getToolType(userMessage);
-        if (toolType) {
-            const result = await toolServiceIntegration.executeToolCommand(userMessage);
-            
-            // 获取或创建用户
-            let user = await getUser(userId);
-            if (!user) {
-                user = await createUser(userId);
-            }
-
-            // 获取或创建会话
-            let conversation;
-            if (conversationId) {
-                conversation = user.conversations.find(c => c.id === conversationId);
-                if (!conversation) {
-                    throw new Error(`会话 ${conversationId} 未找到`);
-                }
-            } else {
-                conversation = {
-                    id: uuidv4(),
-                    messages: []
-                };
-                user.conversations.push(conversation);
-            }
-
-            // 构建工具响应
-            const toolMessage = result.success ? 
-                { role: 'assistant', content: result.output } :
-                { role: 'assistant', content: `执行失败: ${result.error}` };
-
-            // 更新会话历史
-            conversation.messages.push(
-                { role: 'user', content: userMessage },
-                toolMessage
-            );
-
-            // 保持历史记录在合理范围内
-            if (conversation.messages.length > 10) {
-                conversation.messages.splice(0, conversation.messages.length - 10);
-            }
-
-            // 保存用户数据
-            await saveUser(user);
-
-            // 返回工具执行结果
-            return {
-                messages: conversation.messages,
-                metadata: { 
-                    mode: 'tool',
-                    toolType: result.toolType,
-                    success: result.success
-                },
-                conversationId: conversation.id
-            };
-        }
-
         // 获取或创建用户的对话历史
         let user = await getUser(userId);
         if (!user) {
@@ -232,8 +151,42 @@ export async function chat(userMessage, userId, conversationId) {
         }
 
         const conversationHistory = conversation.messages;
-
         let response;
+
+        // 首先尝试使用 agent 处理所有消息
+        try {
+            const agentResult = await toolServiceIntegration.executeTask(userMessage);
+            
+            if (agentResult.success) {
+                // 更新会话历史
+                conversationHistory.push(
+                    { role: 'user', content: userMessage },
+                    { role: 'assistant', content: agentResult.output }
+                );
+
+                // 保持历史记录在合理范围内
+                if (conversationHistory.length > 10) {
+                    conversationHistory.splice(0, conversationHistory.length - 10);
+                }
+
+                // 保存用户数据
+                await saveUser(user);
+
+                return {
+                    messages: conversationHistory,
+                    metadata: { 
+                        mode: 'agent',
+                        ...agentResult.metadata
+                    },
+                    conversationId: conversation.id
+                };
+            }
+        } catch (error) {
+            console.error('Agent处理失败:', error);
+            // Agent处理失败，继续尝试其他模式
+        }
+
+        // 如果 agent 未处理，继续使用 RAG 或普通对话模式
         if (process.env.DEBUG) {
             console.log('\n=== Debug: Chat Processing ===');
             console.log('RAG Enabled:', isRagEnabled);
@@ -292,14 +245,20 @@ export async function chat(userMessage, userId, conversationId) {
                     new HumanMessage(userMessage)
                 ];
 
+                console.log('消息历史:', messages);  // 新添加的调试日志
+
                 // 调用OpenAI API
                 const model = new ChatOpenAI({
-                    openAIApiKey: process.env.OPENAI_API_KEY,
-                    modelName: process.env.MODEL_NAME || 'gpt-3.5-turbo',
+                    openAIApiKey: CONFIG.OPENAI.API_KEY,
+                    modelName: CONFIG.OPENAI.MODEL_NAME,
+                    temperature: CONFIG.OPENAI.CHAT_TEMPERATURE,
                     configuration: {
-                        apiKey: process.env.OPENAI_API_KEY,
-                        basePath: process.env.OPENAI_BASE_URL,
-                        baseURL: process.env.OPENAI_BASE_URL
+                        apiKey: CONFIG.OPENAI.API_KEY,
+                        basePath: CONFIG.OPENAI.API_BASE,
+                        baseURL: CONFIG.OPENAI.API_BASE,
+                        defaultHeaders: {
+                            'Content-Type': 'application/json'
+                        }
                     }
                 });
 
@@ -345,22 +304,27 @@ export async function chat(userMessage, userId, conversationId) {
         if (!response) {
             // 使用普通对话模式
             const model = new ChatOpenAI({
-                openAIApiKey: process.env.OPENAI_API_KEY,
-                modelName: process.env.MODEL_NAME || 'gpt-3.5-turbo',
+                apiKey: CONFIG.OPENAI.API_KEY,
+                modelName: CONFIG.OPENAI.MODEL_NAME,
                 configuration: {
-                    apiKey: process.env.OPENAI_API_KEY,
-                    basePath: process.env.OPENAI_BASE_URL,
-                    baseURL: process.env.OPENAI_BASE_URL
-                }
+                    baseURL: CONFIG.OPENAI.API_BASE,
+                    defaultHeaders: {
+                        'Content-Type': 'application/json'
+                    }
+                },
+                temperature: CONFIG.OPENAI.CHAT_TEMPERATURE,
+                streaming: true
             });
 
             const messages = [
-                new SystemMessage('你是一个友好的AI助手。'),
+                new SystemMessage(CONFIG.defaultSystemPrompt),
                 ...conversationHistory.map(msg => 
                     msg.role === 'user' ? new HumanMessage(msg.content) : new AIMessage(msg.content)
                 ),
                 new HumanMessage(userMessage)
             ];
+
+            console.log('消息历史:', messages);
 
             const result = await model.invoke(messages);
 
@@ -369,13 +333,16 @@ export async function chat(userMessage, userId, conversationId) {
                 { role: 'assistant', content: result.content }
             );
 
-            if (conversationHistory.length > 10) {
-                conversationHistory.splice(0, conversationHistory.length - 10);
+            if (conversationHistory.length > CONFIG.maxConversationLength) {
+                conversationHistory.splice(0, conversationHistory.length - CONFIG.maxConversationLength);
             }
 
             response = {
                 messages: conversationHistory,
-                metadata: { mode: 'normal' },
+                metadata: { 
+                    mode: 'chat',
+                    model: CONFIG.OPENAI.MODEL_NAME
+                },
                 conversationId: conversation.id
             };
         }
@@ -386,7 +353,13 @@ export async function chat(userMessage, userId, conversationId) {
         return response;
     } catch (error) {
         console.error('聊天错误:', error);
-        throw error;
+        return {
+            success: false,
+            error: error.message,
+            metadata: {
+                mode: 'error'
+            }
+        };
     }
 }
 
