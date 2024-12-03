@@ -4,6 +4,8 @@ import { createToolCallingAgent } from "langchain/agents";
 import { AgentExecutor } from "langchain/agents";
 import { ChatMessageHistory } from "@langchain/community/stores/message/in_memory";
 import { calculatorTool, timeTool, windowsCommandTool, fileOperationTool, WebBrowserTool, SearchTool, WebScraperTool } from "../tools/index.js";
+import { HumanMessage, AIMessage } from "@langchain/core/messages";
+import CONFIG from '../config/index.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -12,12 +14,14 @@ export class AgentToolService {
     constructor() {
         // 初始化 OpenAI 模型
         this.model = new ChatOpenAI({
-            openAIApiKey: 'sk-aRUVCBaoLTtfKSfX573c06D3779a41D4B26b00F11dF9Eb37',
-            modelName: 'gpt-4',
+            openAIApiKey: CONFIG.openai.apiKey,
+            modelName: CONFIG.openai.modelName,
             configuration: {
-                apiKey: 'sk-aRUVCBaoLTtfKSfX573c06D3779a41D4B26b00F11dF9Eb37',
-                basePath: 'https://closeproxy.unidtai.com/v1',
-                baseURL: 'https://closeproxy.unidtai.com/v1'
+                basePath: CONFIG.openai.apiBase,
+                baseURL: CONFIG.openai.apiBase,
+                defaultHeaders: {
+                    'Content-Type': 'application/json'
+                }
             }
         });
 
@@ -114,8 +118,8 @@ export class AgentToolService {
             });
 
             // 更新历史记录
-            await history.addUserMessage(input);
-            await history.addAIMessage(result.output);
+            await history.addMessage(new HumanMessage({ content: input }));
+            await history.addMessage(new AIMessage({ content: result.output }));
 
             return {
                 success: true,

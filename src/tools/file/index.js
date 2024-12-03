@@ -6,12 +6,21 @@ import os from 'os';
 
 // 路径解析函数
 function resolvePath(inputPath) {
+    // 替换环境变量
+    const expandedPath = inputPath.replace(/%([^%]+)%/g, (_, n) => process.env[n] || '');
+
     // 处理特殊路径
-    if (inputPath.toLowerCase().startsWith('desktop')) {
+    if (expandedPath.toLowerCase().startsWith('desktop')) {
         const desktopPath = path.join(os.homedir(), 'Desktop');
-        return path.join(desktopPath, inputPath.slice(7));
+        return path.join(desktopPath, expandedPath.slice(7));
     }
-    return path.resolve(inputPath);
+
+    // 如果路径以 %TEMP% 开头但没有被替换（可能是因为大小写问题），使用系统临时目录
+    if (inputPath.toUpperCase().startsWith('%TEMP%')) {
+        return path.join(os.tmpdir(), inputPath.slice(6));
+    }
+
+    return path.resolve(expandedPath);
 }
 
 // 文件操作工具的 schema

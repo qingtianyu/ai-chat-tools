@@ -1,160 +1,103 @@
-# AI Chat CLI 应用
+# AI Chat Application with RAG Support
 
-一个功能强大的命令行 AI 聊天应用，支持多会话管理、知识库检索和上下文记忆。
+这是一个基于 Node.js 的 AI 聊天应用程序，集成了检索增强生成（RAG）功能。
 
-## 🌟 主要特性
+## 功能特点
 
-### 1. 智能对话系统
-- 基于 OpenAI GPT 模型的智能对话
-- 上下文记忆，保持对话连贯性
-- 支持多轮对话历史记录
-- 智能理解和回答用户问题
+- 基于 OpenAI GPT 模型的对话功能
+- 支持检索增强生成（RAG）
+- 支持多知识库管理
+- 灵活的配置系统
+- 事件驱动架构
 
-### 2. 会话管理
-- 多会话并行支持
-- 会话列表查看和切换
-  - 显示会话创建时间
-  - 显示会话唯一标识符（UUID）
-  - 显示首条消息预览
-  - 显示最新消息预览
-  - 显示消息数量统计
-  - 当前活动会话标记
-- 会话存储双重保障
-  - 数据库存储（主要存储）
-  - 本地文件存储（备份存储）
+## 目录结构
 
-### 3. RAG 知识库检索
-- 支持文档知识库构建
-- 向量化存储和检索
-- 智能文档相关性匹配
-- 支持多种文档格式
+```
+src/
+├── services/
+│   ├── chat/
+│   │   ├── processors/
+│   │   │   ├── BaseProcessor.js
+│   │   │   ├── RagProcessor.js
+│   │   │   └── ...
+│   └── rag-service.js
+├── config/
+│   └── index.js
+└── utils/
+    ├── OpenAIClient.js
+    └── ErrorHandler.js
+```
 
-### 4. 用户系统
-- 用户数据管理
-- 会话历史记录保存
-- 用户配置个性化
-- 数据持久化存储
+## 安装
 
-### 5. 系统命令
-- `/list` - 查看历史会话列表
-- `/switch` - 切换到指定会话
-- `/new` - 创建新会话
-- `/clear` - 清除当前会话上下文
-- `/exit` - 退出应用程序
-- `/help` - 显示帮助信息
-
-## 🛠️ 技术架构
-
-### 核心组件
-1. **对话引擎**
-   - OpenAI API 集成
-   - 对话上下文管理
-   - 响应格式化处理
-
-2. **存储系统**
-   - Prisma ORM 数据库操作
-   - 本地 JSON 文件存储
-   - 用户数据持久化
-
-3. **知识库系统**
-   - 文档向量化处理
-   - 向量数据库存储
-   - 相似度检索算法
-
-4. **命令行界面**
-   - 交互式命令处理
-   - 格式化输出展示
-   - 用户输入处理
-
-## 📦 依赖项目
-- Node.js
-- OpenAI API
-- Prisma ORM
-- LangChain
-- Vector Store
-
-## 🚀 快速开始
-
-### 环境要求
-- Node.js 16.x 或更高版本
-- NPM 或 Yarn 包管理器
-- OpenAI API 密钥
-
-### 安装步骤
-1. 克隆项目
+1. 克隆仓库：
 ```bash
-git clone [项目地址]
+git clone <repository-url>
 cd ai-chat4
 ```
 
-2. 安装依赖
+2. 安装依赖：
 ```bash
 npm install
 ```
 
-3. 配置环境变量
+3. 配置环境变量：
 ```bash
 cp .env.example .env
-# 编辑 .env 文件，填入必要的配置信息
 ```
+然后编辑 `.env` 文件，填入你的 OpenAI API 密钥和其他配置。
 
-4. 运行应用
-```bash
-npm start
-```
+## 配置说明
 
-## 💡 使用指南
+主要配置项：
 
-### 基本操作
-1. **启动应用**
-   - 运行 `npm start` 启动应用
-   - 首次运行将自动创建新会话
-
-2. **对话交互**
-   - 直接输入文字进行对话
-   - 使用命令前缀 `/` 执行系统命令
-
-3. **会话管理**
-   - 使用 `/list` 查看所有会话
-   - 使用 `/switch` 切换会话
-   - 使用 `/new` 创建新会话
-
-4. **上下文管理**
-   - 系统自动维护对话上下文
-   - 使用 `/clear` 清除当前上下文
-
-## 🔧 配置说明
-
-### 环境变量
 - `OPENAI_API_KEY`: OpenAI API 密钥
-- `DATABASE_URL`: 数据库连接字符串
-- `VECTOR_STORE_PATH`: 向量存储路径
-- `USER_DATA_PATH`: 用户数据存储路径
+- `MODEL_NAME`: GPT 模型名称
+- `OPENAI_EMBEDDINGS_MODEL`: 嵌入模型名称
+- `OPENAI_BASE_URL`: API 基础 URL
+- `RAG_CHUNK_SIZE`: 文档分块大小
+- `RAG_CHUNK_OVERLAP`: 文档分块重叠大小
+- `RAG_MAX_DOCS`: 最大检索文档数
+- `RAG_MIN_SCORE`: 最小相关性分数
 
-### 系统配置
-- 最大上下文长度设置
-- 模型参数配置
-- 存储路径配置
-- 输出格式设置
+## 使用方法
 
-## 📈 后续规划
+1. 启动命令行界面：
+```bash
+node src/chat-cli2.js
+```
 
-### 计划功能
-1. 会话导出功能
-2. 会话搜索功能
-3. 批量会话管理
-4. 知识库管理界面
-5. 数据同步备份
+2. 与 AI 助手对话：
+- 输入问题并按回车
+- 输入 "exit" 退出程序
 
-### 性能优化
-1. 响应速度优化
-2. 内存使用优化
-3. 存储效率提升
+## 开发说明
 
-## 🤝 贡献指南
+### 架构设计
 
-欢迎提交 Issue 和 Pull Request 来帮助改进项目。
+- `OpenAIClient`: 统一的 OpenAI API 接口
+- `RAGService`: RAG 功能的核心服务
+- `RagProcessor`: RAG 消息处理器
+- `BaseProcessor`: 处理器基类
 
-## 📄 许可证
+### 扩展功能
 
-MIT License
+1. 添加新的处理器：
+   - 继承 `BaseProcessor`
+   - 实现 `process` 方法
+   - 在 `chat-cli2.js` 中注册
+
+2. 添加新的知识库：
+   - 使用 `RAGService` 的 API
+   - 支持文件和文本形式
+
+## 贡献指南
+
+1. Fork 项目
+2. 创建功能分支
+3. 提交更改
+4. 发起 Pull Request
+
+## 许可证
+
+MIT

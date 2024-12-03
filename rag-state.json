@@ -1,5 +1,5 @@
 {
   "enabled": true,
   "mode": "multi",
-  "currentKnowledgeBase": "report"
+  "currentKnowledgeBase": "agent-article"
 }

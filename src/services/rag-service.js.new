@@ -1,0 +1,367 @@
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { OpenAIEmbeddings } from "@langchain/openai";
+import dotenv from 'dotenv';
+import fs from 'fs/promises';
+import path from 'path';
+import eventManager from './event-manager.js';
+
+dotenv.config();
+
+export class RAGService {
+    static #instance = null;
+
+    constructor(config = {}) {
+        if (RAGService.#instance) {
+            return RAGService.#instance;
+        }
+
+        // RAG 配置选项
+        this.config = {
+            // 文档分割配置
+            chunkSize: config.chunkSize || 1000,
+            chunkOverlap: config.chunkOverlap || 200,
+            
+            // 检索配置
+            maxRetrievedDocs: config.maxRetrievedDocs || 5,
+            minRelevanceScore: config.minRelevanceScore || 0.9,
+            
+            // 结果处理配置
+            useScoreWeighting: config.useScoreWeighting ?? true,
+            weightingMethod: config.weightingMethod || 'linear', // 'linear' | 'exponential'
+            
+            // API 重试配置
+            maxRetries: config.maxRetries || 3,
+            retryDelay: config.retryDelay || 5000, // 5秒
+            
+            // 调试配置
+            debug: config.debug || false
+        };
+        
+        // 设置知识库目录路径
+        this.knowledgeBasePath = config.knowledgeBasePath || path.join(process.cwd(), 'docs');
+        
+        // 初始化 OpenAI embeddings，添加重试逻辑
+        this.embeddings = new OpenAIEmbeddings({
+            openAIApiKey: process.env.OPENAI_API_KEY,
+            maxRetries: this.config.maxRetries,
+            timeout: 60000
+        });
+        
+        // 用户手动添加的知识库
+        this.userKnowledgeBases = new Map();
+        // 系统自动加载的知识库
+        this.systemKnowledgeBases = new Map();
+        // 系统知识库是否已加载标志
+        this._systemKnowledgeBasesLoaded = false;
+        // 系统知识库是否正在加载标志
+        this._loadingSystemKnowledgeBases = false;
+        // 当前激活的知识库名称
+        this.currentKnowledgeBase = null;
+        // RAG 服务启用状态
+        this._enabled = true;
+        // RAG 服务模式
+        this._mode = 'single';
+
+        // 初始化状态持久化
+        this._loadState();
+        
+        RAGService.#instance = this;
+    }
+
+    static getInstance(config = {}) {
+        if (!RAGService.#instance) {
+            RAGService.#instance = new RAGService(config);
+        }
+        return RAGService.#instance;
+    }
+
+    // 状态持久化方法
+    async _saveState() {
+        try {
+            const state = {
+                enabled: this._enabled,
+                mode: this._mode,
+                currentKnowledgeBase: this.currentKnowledgeBase
+            };
+            await fs.writeFile(
+                path.join(process.cwd(), 'rag-state.json'),
+                JSON.stringify(state, null, 2)
+            );
+        } catch (error) {
+            console.error('保存 RAG 状态失败:', error);
+        }
+    }
+
+    async _loadState() {
+        try {
+            const statePath = path.join(process.cwd(), 'rag-state.json');
+            const data = await fs.readFile(statePath, 'utf8');
+            const state = JSON.parse(data);
+            this._enabled = state.enabled;
+            this._mode = state.mode;
+            this.currentKnowledgeBase = state.currentKnowledgeBase;
+            
+            // 发出状态加载事件
+            eventManager.emit('rag:stateLoaded', {
+                enabled: this._enabled,
+                mode: this._mode,
+                currentKnowledgeBase: this.currentKnowledgeBase
+            });
+        } catch (error) {
+            // 如果文件不存在，使用默认值
+            console.log('使用默认 RAG 状态');
+        }
+    }
+
+    // 获取 RAG 服务状态
+    isEnabled() {
+        return this._enabled;
+    }
+
+    // 获取 RAG 服务模式
+    getMode() {
+        return this._mode;
+    }
+
+    // 获取当前知识库
+    getCurrentKnowledgeBase() {
+        return this.currentKnowledgeBase;
+    }
+
+    // 切换 RAG 服务状态
+    async toggleEnabled() {
+        this._enabled = !this._enabled;
+        await this._saveState();
+        eventManager.emit('rag:enabledChanged', this._enabled);
+        return this._enabled;
+    }
+
+    // 切换 RAG 服务模式
+    async toggleMode() {
+        this._mode = this._mode === 'single' ? 'multi' : 'single';
+        await this._saveState();
+        eventManager.emit('rag:modeChanged', this._mode);
+        return this._mode;
+    }
+
+    // 添加用户知识库
+    async addUserKnowledgeBase(name, content) {
+        try {
+            const splitter = new RecursiveCharacterTextSplitter({
+                chunkSize: this.config.chunkSize,
+                chunkOverlap: this.config.chunkOverlap
+            });
+
+            const docs = await splitter.createDocuments([content]);
+            const vectorStore = await MemoryVectorStore.fromDocuments(
+                docs,
+                this.embeddings
+            );
+
+            this.userKnowledgeBases.set(name, vectorStore);
+            this.currentKnowledgeBase = name;
+            await this._saveState();
+
+            eventManager.emit('rag:knowledgeBaseAdded', {
+                name,
+                type: 'user',
+                documentCount: docs.length
+            });
+
+            return {
+                success: true,
+                name,
+                documentCount: docs.length
+            };
+        } catch (error) {
+            console.error('添加知识库失败:', error);
+            throw error;
+        }
+    }
+
+    // 加载系统知识库
+    async loadSystemKnowledgeBases() {
+        if (this._loadingSystemKnowledgeBases) {
+            console.log('系统知识库正在加载中...');
+            return;
+        }
+
+        if (this._systemKnowledgeBasesLoaded) {
+            console.log('系统知识库已加载');
+            return;
+        }
+
+        this._loadingSystemKnowledgeBases = true;
+
+        try {
+            const files = await fs.readdir(this.knowledgeBasePath);
+            
+            for (const file of files) {
+                if (file.endsWith('.txt') || file.endsWith('.md')) {
+                    const filePath = path.join(this.knowledgeBasePath, file);
+                    const content = await fs.readFile(filePath, 'utf8');
+                    
+                    const splitter = new RecursiveCharacterTextSplitter({
+                        chunkSize: this.config.chunkSize,
+                        chunkOverlap: this.config.chunkOverlap
+                    });
+
+                    const docs = await splitter.createDocuments([content]);
+                    const vectorStore = await MemoryVectorStore.fromDocuments(
+                        docs,
+                        this.embeddings
+                    );
+
+                    const name = path.basename(file, path.extname(file));
+                    this.systemKnowledgeBases.set(name, vectorStore);
+
+                    eventManager.emit('rag:knowledgeBaseAdded', {
+                        name,
+                        type: 'system',
+                        documentCount: docs.length
+                    });
+                }
+            }
+
+            this._systemKnowledgeBasesLoaded = true;
+            console.log('系统知识库加载完成');
+        } catch (error) {
+            console.error('加载系统知识库失败:', error);
+            throw error;
+        } finally {
+            this._loadingSystemKnowledgeBases = false;
+        }
+    }
+
+    // 获取知识库列表
+    getKnowledgeBases() {
+        const knowledgeBases = [];
+        
+        // 添加系统知识库
+        for (const [name] of this.systemKnowledgeBases) {
+            knowledgeBases.push({
+                name,
+                type: 'system'
+            });
+        }
+        
+        // 添加用户知识库
+        for (const [name] of this.userKnowledgeBases) {
+            knowledgeBases.push({
+                name,
+                type: 'user'
+            });
+        }
+        
+        return knowledgeBases;
+    }
+
+    // 切换知识库
+    async switchKnowledgeBase(name) {
+        if (!this.systemKnowledgeBases.has(name) && !this.userKnowledgeBases.has(name)) {
+            throw new Error(`知识库 "${name}" 不存在`);
+        }
+
+        this.currentKnowledgeBase = name;
+        await this._saveState();
+        
+        eventManager.emit('rag:knowledgeBaseSwitched', name);
+        return name;
+    }
+
+    // 删除知识库
+    async removeKnowledgeBase(name) {
+        if (this.systemKnowledgeBases.has(name)) {
+            throw new Error('系统知识库不能删除');
+        }
+
+        if (!this.userKnowledgeBases.has(name)) {
+            throw new Error(`知识库 "${name}" 不存在`);
+        }
+
+        this.userKnowledgeBases.delete(name);
+        
+        if (this.currentKnowledgeBase === name) {
+            this.currentKnowledgeBase = null;
+            await this._saveState();
+        }
+
+        eventManager.emit('rag:knowledgeBaseRemoved', name);
+        return true;
+    }
+
+    // 处理消息
+    async processMessage(message) {
+        if (!this._enabled) {
+            return [];
+        }
+
+        try {
+            let results = [];
+            
+            if (this._mode === 'single') {
+                // 单知识库模式
+                if (!this.currentKnowledgeBase) {
+                    return [];
+                }
+
+                const vectorStore = this.systemKnowledgeBases.get(this.currentKnowledgeBase) ||
+                                  this.userKnowledgeBases.get(this.currentKnowledgeBase);
+                
+                if (!vectorStore) {
+                    throw new Error(`当前知识库 "${this.currentKnowledgeBase}" 不存在`);
+                }
+
+                results = await vectorStore.similaritySearch(
+                    message,
+                    this.config.maxRetrievedDocs,
+                    { minRelevanceScore: this.config.minRelevanceScore }
+                );
+            } else {
+                // 多知识库模式
+                const allResults = [];
+                
+                // 搜索系统知识库
+                for (const [name, vectorStore] of this.systemKnowledgeBases) {
+                    const docs = await vectorStore.similaritySearch(
+                        message,
+                        this.config.maxRetrievedDocs,
+                        { minRelevanceScore: this.config.minRelevanceScore }
+                    );
+                    allResults.push(...docs.map(doc => ({
+                        ...doc,
+                        metadata: { ...doc.metadata, knowledgeBase: name, type: 'system' }
+                    })));
+                }
+                
+                // 搜索用户知识库
+                for (const [name, vectorStore] of this.userKnowledgeBases) {
+                    const docs = await vectorStore.similaritySearch(
+                        message,
+                        this.config.maxRetrievedDocs,
+                        { minRelevanceScore: this.config.minRelevanceScore }
+                    );
+                    allResults.push(...docs.map(doc => ({
+                        ...doc,
+                        metadata: { ...doc.metadata, knowledgeBase: name, type: 'user' }
+                    })));
+                }
+
+                // 根据相关性分数排序
+                results = allResults
+                    .sort((a, b) => b.metadata.score - a.metadata.score)
+                    .slice(0, this.config.maxRetrievedDocs);
+            }
+
+            if (this.config.debug) {
+                console.log('RAG 检索结果:', results);
+            }
+
+            return results;
+        } catch (error) {
+            console.error('RAG 处理消息失败:', error);
+            throw error;
+        }
+    }
+}

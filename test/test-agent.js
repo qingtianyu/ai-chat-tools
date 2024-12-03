@@ -1,4 +1,4 @@
-import toolServiceIntegration from './services/tool-service-integration.js';
+import toolServiceIntegration from '../src/services/tool-service-integration.js';
 
 async function testToolService() {
     console.log('\n=== 测试工具服务 ===\n');
